@@ -1,0 +1,23 @@
+services:
+  tyagach_loop:
+    build: .
+    command: python loop.py
+    env_file: .env
+    volumes:
+      - tyagach_data:/app/data
+    restart: unless-stopped
+
+  tyagach_api:
+    build: .
+    command: uvicorn api:app --host 0.0.0.0 --port 8100
+    env_file: .env
+    ports:
+      - "8100:8100"
+    volumes:
+      - tyagach_data:/app/data
+    restart: unless-stopped
+    depends_on:
+      - tyagach_loop
+
+volumes:
+  tyagach_data:

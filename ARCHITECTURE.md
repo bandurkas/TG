@@ -4,10 +4,21 @@ Decisions locked in this session (2026-06-26). Don't re-litigate without new evi
 
 ## Execution model
 
-Real Bybit **testnet** orders, on a **new dedicated testnet account** (separate
-from Boba1/Grogu1/Sniper1) — not a pure internal simulator. This means the bot
-is exposed to real bid/ask spread, real fills, real option chain availability,
-which is the #1 gap flagged in TYAGACH_HANDOFF.md's "not validated" section.
+Real Bybit **testnet** orders — not a pure internal simulator. This means the
+bot is exposed to real bid/ask spread, real fills, real option chain
+availability, which is the #1 gap flagged in TYAGACH_HANDOFF.md's "not
+validated" section.
+
+**Account: reuses Grogu1's existing API key** (not a new dedicated account as
+originally planned). Decrypted from opt-app's Postgres (account_id=3) and
+written to `/root/tyagach/.env` (gitignored). **Accepted consequence:**
+Grogu1's own `reconcile.py` will see Tyagach's ETH option positions as
+"untracked" on the shared account and will likely block Grogu1's new opens —
+this is the exact landmine documented in
+`feedback_options_live_two_accounts` memory, deliberately triggered here on
+user's explicit call ("приносим в жертву Grogu", 2026-06-26). Not a bug to
+fix; Grogu1 getting blocked is an accepted side effect, not a regression to
+chase.
 
 ## Repo / deployment
 

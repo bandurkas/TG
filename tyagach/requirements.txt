@@ -1,0 +1,6 @@
+pandas
+numpy
+requests
+pybit
+fastapi
+uvicorn[standard]
