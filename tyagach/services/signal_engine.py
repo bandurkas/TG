@@ -117,8 +117,15 @@ def scan_pending_zones(df: pd.DataFrame) -> list[TriggeredEntry]:
                 break
             touched = (lows[i] <= mid) if is_long else (highs[i] >= mid)
             if touched:
-                triggered.append(TriggeredEntry(row["zone_key"], row["kind"], row["direction"],
-                                                 int(df["ts_ms"].iloc[i]), mid, stop_price))
+                if (n - 1 - i) > config.STALE_AFTER_BARS:
+                    # Too old to act on with today's quote (see config.STALE_AFTER_BARS) —
+                    # e.g. a multi-day cold-start backlog or outage gap. Expire it rather
+                    # than trading a historical touch against a live price that has nothing
+                    # to do with the signal's actual context.
+                    repo.set_zone_signal_status(row["zone_key"], "expired")
+                else:
+                    triggered.append(TriggeredEntry(row["zone_key"], row["kind"], row["direction"],
+                                                     int(df["ts_ms"].iloc[i]), mid, stop_price))
                 resolved = True
                 break
         if not resolved and end_idx >= start_idx + config.MAX_ZONE_LOOKAHEAD:

@@ -44,6 +44,16 @@ SWING_ORDER = 3  # fractal swing detection lookback, matches research
 ROLLING_WINDOW_BARS = 2000  # ~20 days of 15m bars kept in memory for zone detection
 MAX_ZONE_LOOKAHEAD = 800  # matches options_backtest.py MAX_LOOKAHEAD — zone invalidation horizon
 
+# A midpoint touch found more than this many bars in the past (relative to
+# the latest closed bar) is too stale to trade: Bybit has no historical
+# option chain, so execution.py can only price an entry off TODAY's live
+# quote. Acting on an old touch with today's quote isn't an approximation of
+# the validated backtest, it's a different, meaningless trade — so signal_
+# engine.py marks anything older than this 'expired' instead of 'triggered'.
+# This is what makes a cold start (or a multi-day outage gap) safe: it skips
+# the whole backlog instead of paper-trading it against the wrong prices.
+STALE_AFTER_BARS = 4  # 1 hour at 15m bars
+
 SYMBOL = "ETHUSDT"
 BASE_COIN = "ETH"
 KLINE_INTERVAL = "15"  # Bybit kline interval code for 15m
