@@ -3,10 +3,15 @@ mirroring opt-app's services/execution.py conventions (never assume a fill;
 read back avgPrice/cumExecQty from the exchange) but trimmed to this
 project's single-account, single-coin (ETH) scope.
 
-Runs against Bybit TESTNET using Grogu1's existing API key (see
-ARCHITECTURE.md / project_tyagach_paper_bot memory for why — accepted
-known side effect: Grogu1's own reconcile.py will see these positions as
-untracked on the shared account)."""
+The account behind BYBIT_API_KEY/SECRET is a REAL Bybit mainnet account
+(not Bybit's separate testnet environment — that was the original plan,
+superseded 2026-06-26 once the user supplied a real-account key instead).
+Gated by config.TRADING_MODE ("paper" by default): real-account calls for
+market data (instruments/quotes/wallet/account info) always run, but
+sell_to_open/buy_to_close only place a REAL order when
+config.is_live() — otherwise they simulate a fill against the real live
+quote (see _paper_fill). Flip TYAGACH_TRADING_MODE=live in .env when ready
+to arm real execution; nothing else needs to change."""
 from __future__ import annotations
 
 import os
@@ -38,7 +43,10 @@ class ExecutionError(Exception):
 
 
 def _use_testnet() -> bool:
-    return os.environ.get("BYBIT_TESTNET", "true").strip().lower() in ("1", "true", "yes")
+    # Default false: BYBIT_API_KEY/SECRET is a real mainnet account (see
+    # module docstring) — only set BYBIT_TESTNET=true if a genuine
+    # testnet.bybit.com key is ever swapped in instead.
+    return os.environ.get("BYBIT_TESTNET", "false").strip().lower() in ("1", "true", "yes")
 
 
 def _credentials() -> tuple[str | None, str | None]:
@@ -130,10 +138,29 @@ class ExecutionClient:
         return round(round(qty / step) * step, 6)
 
     def sell_to_open(self, symbol: str, qty: float, limit_price: float) -> OrderResult | None:
+        if not config.is_live():
+            return self._paper_fill(symbol, qty, limit_price)
         return self._place_and_confirm(symbol, "Sell", qty, limit_price)
 
     def buy_to_close(self, symbol: str, qty: float, limit_price: float) -> OrderResult | None:
+        if not config.is_live():
+            return self._paper_fill(symbol, qty, limit_price)
         return self._place_and_confirm(symbol, "Buy", qty, limit_price)
+
+    def _paper_fill(self, symbol: str, qty: float, limit_price: float) -> OrderResult:
+        """Simulated fill for paper mode — no place_order call, nothing
+        touches the real account's positions/balance. Fills the FULL
+        requested qty at the live quote passed in by the caller (the same
+        bid/ask `loop.py` would have submitted a real IOC order at), with a
+        fee estimate using the validated FEE_RATE/FEE_CAP_PCT applied to the
+        option premium notional (qty * limit_price) — this is the option
+        premium itself, not the underlying notional `portfolio.py`'s _fee()
+        uses, since paper fills here have no spot price on hand; treat it as
+        a reasonable stand-in, not the exact research formula."""
+        premium_notional = qty * limit_price
+        fee = min(premium_notional * config.FEE_RATE, premium_notional * config.FEE_CAP_PCT)
+        order_id = f"PAPER-{uuid.uuid4().hex[:20]}"
+        return OrderResult(order_id, limit_price, qty, fee, "Filled")
 
     def _place_and_confirm(self, symbol: str, side: str, qty: float, limit_price: float) -> OrderResult | None:
         link_id = uuid.uuid4().hex[:24]

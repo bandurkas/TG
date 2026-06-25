@@ -4,21 +4,26 @@ Decisions locked in this session (2026-06-26). Don't re-litigate without new evi
 
 ## Execution model
 
-Real Bybit **testnet** orders — not a pure internal simulator. This means the
-bot is exposed to real bid/ask spread, real fills, real option chain
-availability, which is the #1 gap flagged in TYAGACH_HANDOFF.md's "not
-validated" section.
+Real Bybit account, real quotes/instruments — not a pure internal simulator.
+**Turned out to be a REAL Bybit mainnet account, not Bybit's separate
+testnet.bybit.com environment** (the original plan). Briefly used Grogu1's
+existing key on 2026-06-26 (decrypted from opt-app's Postgres, account_id=3)
+and accepted the consequence that Grogu1's own `reconcile.py` would see
+Tyagach's positions as "untracked" and block its opens — superseded same day
+once the user provided a fresh, separate API key. That key authenticates to
+`api.bybit.com` (mainnet), confirmed via `get_api_key_information` (UTA=1,
+`Options: OptionsTrade` permission, $0 balance — unfunded).
 
-**Account: reuses Grogu1's existing API key** (not a new dedicated account as
-originally planned). Decrypted from opt-app's Postgres (account_id=3) and
-written to `/root/tyagach/.env` (gitignored). **Accepted consequence:**
-Grogu1's own `reconcile.py` will see Tyagach's ETH option positions as
-"untracked" on the shared account and will likely block Grogu1's new opens —
-this is the exact landmine documented in
-`feedback_options_live_two_accounts` memory, deliberately triggered here on
-user's explicit call ("приносим в жертву Grogu", 2026-06-26). Not a bug to
-fix; Grogu1 getting blocked is an accepted side effect, not a regression to
-chase.
+**Paper/live gate added because of this** (`services/config.py`
+`TRADING_MODE`, default `"paper"`): the real account is used for read-only
+market data (instruments/quotes/wallet) in both modes, but
+`execution.py`'s `sell_to_open`/`buy_to_close` only call Bybit's real
+`place_order` when `TYAGACH_TRADING_MODE=live` — otherwise they simulate a
+fill against the same live quote a real order would have used
+(`_paper_fill`), so nothing touches the real account's positions/balance
+until the user explicitly arms it. `/root/tyagach/.env` (gitignored) holds
+`BYBIT_TESTNET=false` + `TYAGACH_TRADING_MODE=paper`. User's plan: flip to
+`live` once the paper run looks right. Grogu1 is no longer touched at all.
 
 ## Repo / deployment
 

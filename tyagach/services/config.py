@@ -3,6 +3,20 @@ for how these were derived (4yr ETH train/validation/holdout grid search).
 Do not change without re-running the sweep; these are not guesses."""
 from __future__ import annotations
 
+import os
+
+# Paper vs live gate, mirrors opt-app's execution_config.trading_armed()
+# convention. The account behind BYBIT_API_KEY/SECRET is a REAL Bybit
+# mainnet account (not Bybit's separate testnet environment) — in "paper"
+# mode (the default) services/execution.py uses it ONLY for read-only market
+# data (instrument lookup, quotes, wallet/account info) and never calls
+# place_order; fills are simulated against the real live quote instead.
+TRADING_MODE = os.environ.get("TYAGACH_TRADING_MODE", "paper").strip().lower()
+
+
+def is_live() -> bool:
+    return TRADING_MODE == "live"
+
 BARS_PER_DAY = 96  # 15m bars
 DAYS_PER_YEAR = 365.0
 BUFFER_FRAC = 0.0015  # SL buffer beyond zone edge, same as options_backtest.py
