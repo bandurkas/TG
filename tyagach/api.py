@@ -4,6 +4,8 @@ Listens on 0.0.0.0:8100 — open port, no auth, matching opt-app's existing
 exposure pattern (see ARCHITECTURE.md: accepted, not hardened)."""
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,6 +13,11 @@ from db import repo
 
 app = FastAPI(title="Tyagach API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Idempotent (INSERT OR IGNORE) — guards against this process winning the race
+# to query bot_state before the loop container's own init_db() has run, since
+# docker-compose's depends_on only waits for container start, not for that.
+repo.init_db(float(os.environ.get("TYAGACH_STARTING_BALANCE", "2000")))
 
 
 @app.get("/api/v1/tyagach/state")

@@ -18,7 +18,7 @@ from pybit.unified_trading import HTTP
 
 from . import config
 
-_TERMINAL = {"Filled", "Cancelled", "Rejected", "Deactivated"}
+_TERMINAL = {"Filled", "PartiallyFilled", "Cancelled", "Rejected", "Deactivated"}
 
 
 class OrderResult(NamedTuple):

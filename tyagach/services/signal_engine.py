@@ -49,15 +49,14 @@ def sync_new_zones(df: pd.DataFrame) -> None:
     Idempotent — INSERT OR IGNORE on zone_key."""
     detected = detect_zones(df)
     for z in detected:
-        if z.formed_idx >= len(df):
+        # zones.py's build_zones sets valid_from = formed_idx + 1 — a zone only
+        # becomes tradeable the bar AFTER it confirms, never on the confirmation
+        # bar itself. Skip zones whose next bar hasn't closed yet; they'll be
+        # picked up once it has.
+        if z.formed_idx + 1 >= len(df):
             continue
         formed_ts_ms = int(df["ts_ms"].iloc[z.formed_idx])
-        valid_from_ts_ms = formed_ts_ms  # valid_from is formed_idx+1 in the research code; here
-        # we conservatively allow the touch-check to start scanning from the formed bar itself,
-        # since the online scan below starts at valid_from_ts_ms and `> ` comparisons keep behavior
-        # equivalent for practical purposes (a one-bar difference doesn't change which bar a
-        # zone is first tradeable from, given the touch check requires the LOW/HIGH already
-        # printed on valid_from's bar itself).
+        valid_from_ts_ms = int(df["ts_ms"].iloc[z.formed_idx + 1])
         key = zone_key(z, formed_ts_ms)
         repo.upsert_zone_signal(key, z.kind, z.direction, formed_ts_ms, valid_from_ts_ms,
                                  z.zone_low, z.zone_high)

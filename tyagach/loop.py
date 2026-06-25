@@ -17,36 +17,54 @@ from services import config, execution, market_data, portfolio_state, signal_eng
 STARTING_BALANCE = float(os.environ.get("TYAGACH_STARTING_BALANCE", "2000"))
 
 
-def process_new_bar(closed_klines: list[dict]) -> None:
+def process_new_bar(closed_klines: list[dict], new_bars: list[dict]) -> None:
+    """`closed_klines` is the full rolling window (for zone detection, which
+    needs history); `new_bars` is just the bar(s) that closed since the last
+    tick, in chronological order — normally exactly one, but can be several
+    after a restart/outage gap. Exits are walked bar-by-bar in that order
+    (so an SL/TP hit on an EARLIER gap bar isn't missed just because price
+    moved away from it by the time of the latest bar), and balance/open-slot
+    state is refreshed between bars so entries decided on a later bar see the
+    capacity freed by an exit on an earlier one — matching how the backtest's
+    `simulate()` purges exits before evaluating each new candidate."""
     df = signal_engine.klines_to_df(closed_klines)
     signal_engine.sync_new_zones(df)
     triggered = signal_engine.scan_pending_zones(df)
+    new_bar_ts = {b["ts_ms"] for b in new_bars}
+    last_new_bar_ts = new_bars[-1]["ts_ms"]
+    triggered_by_bar: dict[int, list] = {}
+    for e in triggered:
+        # Entries whose touch bar isn't one of THIS tick's new bars are retries
+        # of a signal that triggered earlier but never filled (still 'pending'
+        # in zone_signals) — route them to the latest bar instead of losing
+        # them, since their original bar will never recur as a "new" bar again.
+        bucket_ts = e.entry_ts_ms if e.entry_ts_ms in new_bar_ts else last_new_bar_ts
+        triggered_by_bar.setdefault(bucket_ts, []).append(e)
 
-    state = repo.get_state()
-    latest_bar = closed_klines[-1]
+    current_dvol = market_data.get_latest_dvol() if triggered else None
 
-    if triggered and not state["paused"]:
-        current_dvol = market_data.get_latest_dvol()
-        iv_passed = portfolio_state.filter_by_iv(triggered, current_dvol)
-        if iv_passed:
-            open_positions = repo.get_open_positions()
-            decisions = portfolio_state.decide_entries(iv_passed, state["balance_usdt"], open_positions,
-                                                        current_dvol)
-            for d in decisions:
-                _execute_open(d, latest_bar["ts_ms"])
+    for bar in new_bars:
+        open_positions = repo.get_open_positions()
+        if open_positions:
+            exits = portfolio_state.check_exits(open_positions, bar["high"], bar["low"], bar["ts_ms"])
+            for ex in exits:
+                _execute_close(ex)  # exits run regardless of pause — never abandon an open position
 
-    # Exits run regardless of pause — never abandon an open position.
-    open_positions = repo.get_open_positions()
-    if open_positions:
-        exits = portfolio_state.check_exits(open_positions, latest_bar["high"], latest_bar["low"],
-                                             latest_bar["ts_ms"])
-        for ex in exits:
-            _execute_close(ex)
+        bar_signals = triggered_by_bar.get(bar["ts_ms"], [])
+        state = repo.get_state()
+        if bar_signals and not state["paused"]:
+            iv_passed = portfolio_state.filter_by_iv(bar_signals, current_dvol)
+            if iv_passed:
+                open_positions = repo.get_open_positions()
+                decisions = portfolio_state.decide_entries(iv_passed, state["balance_usdt"], open_positions,
+                                                            current_dvol)
+                for d in decisions:
+                    _execute_open(d)
 
-    repo.set_last_processed(latest_bar["ts_ms"])
+    repo.set_last_processed(new_bars[-1]["ts_ms"])
 
 
-def _execute_open(d: portfolio_state.EntryDecision, now_ts_ms: int) -> None:
+def _execute_open(d: portfolio_state.EntryDecision) -> None:
     e = d.entry
     cfg = config.ZONE_CONFIG[e.kind]
     client = execution.get_client()
@@ -65,6 +83,8 @@ def _execute_open(d: portfolio_state.EntryDecision, now_ts_ms: int) -> None:
 
     qty = client.round_qty(instrument, d.num_units)
     if qty <= 0:
+        print(f"[loop] sizing rounds to 0 qty for {e.kind} {d.option_side} (num_units={d.num_units}, "
+              f"instrument step) — skipping signal {e.zone_key}", flush=True)
         return
 
     result = client.sell_to_open(symbol, qty, quote["bid"])
@@ -78,7 +98,7 @@ def _execute_open(d: portfolio_state.EntryDecision, now_ts_ms: int) -> None:
 
     repo.open_position(
         zone_key=e.zone_key, zone_kind=e.kind, direction=e.direction, option_side=d.option_side,
-        symbol=symbol, strike=actual_strike, entry_ts_ms=now_ts_ms, entry_spot=e.entry_price,
+        symbol=symbol, strike=actual_strike, entry_ts_ms=e.entry_ts_ms, entry_spot=e.entry_price,
         stop_price=e.stop_price,
         tp_price=_tp_price(e, cfg["r_target"]),
         expiry_ts_ms=expiry_ms, iv_entry=d.iv_entry,
@@ -114,7 +134,15 @@ def _execute_close(ex: portfolio_state.ExitDecision) -> None:
     gross_pnl = p["sell_premium_received"] - buy_premium_paid
     net_pnl = gross_pnl - p["open_fee"] - close_fee
 
-    repo.close_position(p["id"], exit_ts_ms=int(time.time() * 1000), exit_spot=market_data.get_spot_price(),
+    # The exchange fill is already confirmed at this point — close_position must
+    # be recorded no matter what, even if the spot-price lookup below fails.
+    try:
+        exit_spot = market_data.get_spot_price()
+    except Exception as e:  # noqa: BLE001
+        print(f"[loop] get_spot_price failed while closing {p['symbol']}, recording 0.0: {e!r}", flush=True)
+        exit_spot = 0.0
+
+    repo.close_position(p["id"], exit_ts_ms=int(time.time() * 1000), exit_spot=exit_spot,
                          exit_reason=ex.exit_reason, close_order_id=result.order_id, pnl_net=net_pnl)
     new_balance = repo.get_state()["balance_usdt"] + net_pnl
     repo.set_balance(new_balance)
@@ -133,10 +161,10 @@ def main() -> None:
             bar_ms = 15 * 60 * 1000
             closed = [k for k in klines if k["ts_ms"] + bar_ms <= now_ms]
             if closed:
-                latest_closed_ts_ms = closed[-1]["ts_ms"]
-                state = repo.get_state()
-                if state.get("last_processed_ts_ms") != latest_closed_ts_ms:
-                    process_new_bar(closed)
+                last_processed_ts_ms = repo.get_state().get("last_processed_ts_ms")
+                new_bars = [k for k in closed if last_processed_ts_ms is None or k["ts_ms"] > last_processed_ts_ms]
+                if new_bars:
+                    process_new_bar(closed, new_bars)
         except Exception as e:  # noqa: BLE001
             print(f"[loop] tick error: {e!r}", flush=True)
         time.sleep(config.POLL_SECONDS)
