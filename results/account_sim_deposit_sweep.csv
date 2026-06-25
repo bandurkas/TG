@@ -1,0 +1,4 @@
+deposit,final_balance,total_return_pct,max_dd_pct,n_trades,n_blocked_lotsize,avg_$_per_month,APR_compounded_%,APR_simple_%
+400.0,1512.5,278.12,15.54,3932,0,23.05,39.2,69.16
+800.0,3038.8,279.85,15.76,3932,0,46.39,39.36,69.59
+2000.0,7648.5,282.43,15.78,3932,0,117.05,39.59,70.23
