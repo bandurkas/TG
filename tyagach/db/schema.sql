@@ -4,6 +4,8 @@
 CREATE TABLE IF NOT EXISTS bot_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton row
     balance_usdt REAL NOT NULL,
+    start_balance_usdt REAL NOT NULL DEFAULT 0,
+    started_at_ms INTEGER,
     paused INTEGER NOT NULL DEFAULT 0,
     last_processed_ts_ms INTEGER,
     updated_at_ms INTEGER NOT NULL

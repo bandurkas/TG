@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from db import repo
+from services import market_data
 
 app = FastAPI(title="Tyagach API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -20,21 +21,78 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 repo.init_db(float(os.environ.get("TYAGACH_STARTING_BALANCE", "2000")))
 
 
+def _max_dd_pct(history: list[dict], start_balance: float) -> float:
+    peak = start_balance if start_balance > 0 else 0.0
+    max_dd = 0.0
+    for pt in history:
+        bal = pt["balance_usdt"]
+        peak = max(peak, bal)
+        if peak > 0:
+            max_dd = max(max_dd, (peak - bal) / peak)
+    return round(max_dd * 100, 2)
+
+
 @app.get("/api/v1/tyagach/state")
 def get_state():
     state = repo.get_state()
     open_positions = repo.get_open_positions()
+    stats = repo.get_position_stats()
+    start_balance = state.get("start_balance_usdt") or 0.0
+    history = repo.get_equity_history(limit=5000)
     return {
         "balance_usdt": state.get("balance_usdt"),
+        "start_balance_usdt": start_balance,
+        "started_at_ms": state.get("started_at_ms"),
         "paused": bool(state.get("paused")),
         "last_processed_ts_ms": state.get("last_processed_ts_ms"),
         "open_position_count": len(open_positions),
+        "n_closed": stats["n_closed"],
+        "wins": stats["wins"],
+        "losses": stats["losses"],
+        "win_rate": stats["win_rate"],
+        "realized_usd": stats["realized_usd"],
+        "max_dd_pct": _max_dd_pct(history, start_balance),
     }
 
 
 @app.get("/api/v1/tyagach/positions")
 def get_positions(status: str | None = None, limit: int = 200):
     return repo.get_positions(status=status, limit=limit)
+
+
+@app.get("/api/v1/tyagach/chart")
+def get_chart(kline_limit: int = 288):
+    """Candlestick data + open positions' entry/stop/tp SPOT price levels.
+    Unlike the straddle bots' /chart (which back-solves an option-premium SL
+    into an approximate spot level), Tyagach's stop_price/tp_price ARE spot
+    levels already — the R-multiple system operates directly on price, so no
+    back-solving is needed here."""
+    klines = market_data.get_klines(limit=kline_limit)
+    spot = klines[-1]["close"] if klines else None
+    open_positions = repo.get_open_positions()
+    zones = [
+        {
+            "id": p["id"],
+            "zone_kind": p["zone_kind"],
+            "direction": p["direction"],
+            "option_side": p["option_side"],
+            "symbol": p["symbol"],
+            "strike": p["strike"],
+            "entry_spot": p["entry_spot"],
+            "stop_price": p["stop_price"],
+            "tp_price": p["tp_price"],
+        }
+        for p in open_positions
+    ]
+    return {
+        "spot": spot,
+        "klines": [
+            {"start_ms": k["ts_ms"], "open": k["open"], "high": k["high"], "low": k["low"],
+             "close": k["close"], "volume": k["volume"]}
+            for k in klines
+        ],
+        "zones": zones,
+    }
 
 
 @app.get("/api/v1/tyagach/equity_history")

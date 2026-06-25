@@ -18,15 +18,42 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    """schema.sql's CREATE TABLE IF NOT EXISTS doesn't retroactively add
+    columns to a table that already exists from an earlier deploy (e.g. the
+    VPS3 DB created before start_balance_usdt/started_at_ms existed) — add
+    them here, ignoring the 'duplicate column' error on every later boot."""
+    for stmt in (
+        "ALTER TABLE bot_state ADD COLUMN start_balance_usdt REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE bot_state ADD COLUMN started_at_ms INTEGER",
+    ):
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+
 def init_db(starting_balance: float) -> None:
     conn = _connect()
     schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
     with open(schema_path) as f:
         conn.executescript(f.read())
+    _ensure_columns(conn)
+    now_ms = int(time.time() * 1000)
     conn.execute(
-        "INSERT OR IGNORE INTO bot_state (id, balance_usdt, paused, last_processed_ts_ms, updated_at_ms) "
-        "VALUES (1, ?, 0, NULL, ?)",
-        (starting_balance, int(time.time() * 1000)),
+        "INSERT OR IGNORE INTO bot_state "
+        "(id, balance_usdt, start_balance_usdt, started_at_ms, paused, last_processed_ts_ms, updated_at_ms) "
+        "VALUES (1, ?, ?, ?, 0, NULL, ?)",
+        (starting_balance, starting_balance, now_ms, now_ms),
+    )
+    # start_balance_usdt/started_at_ms only get set by the INSERT above on a
+    # genuinely fresh row — backfill them on a pre-existing row from an
+    # earlier deploy where they're still the ALTER TABLE default (0/NULL).
+    conn.execute(
+        "UPDATE bot_state SET start_balance_usdt = ?, started_at_ms = ? "
+        "WHERE id = 1 AND (start_balance_usdt = 0 OR started_at_ms IS NULL)",
+        (starting_balance, now_ms),
     )
     conn.commit()
     conn.close()
@@ -130,6 +157,28 @@ def get_open_positions() -> list[dict]:
     rows = conn.execute("SELECT * FROM positions WHERE status = 'open'").fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_position_stats() -> dict:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT COUNT(*) AS n_closed, "
+        "SUM(CASE WHEN pnl_net > 0 THEN 1 ELSE 0 END) AS wins, "
+        "SUM(CASE WHEN pnl_net <= 0 THEN 1 ELSE 0 END) AS losses, "
+        "SUM(pnl_net) AS realized "
+        "FROM positions WHERE status = 'closed'"
+    ).fetchone()
+    conn.close()
+    n_closed = row["n_closed"] or 0
+    wins = row["wins"] or 0
+    losses = row["losses"] or 0
+    return {
+        "n_closed": n_closed,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": (wins / n_closed) if n_closed else None,
+        "realized_usd": row["realized"] or 0.0,
+    }
 
 
 def close_position(position_id: int, *, exit_ts_ms: int, exit_spot: float, exit_reason: str,
