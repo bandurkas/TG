@@ -12,7 +12,7 @@ import os
 import time
 
 from db import repo
-from services import config, execution, market_data, portfolio_state, signal_engine
+from services import config, execution, market_data, portfolio_state, signal_engine, telegram_notify
 
 STARTING_BALANCE = float(os.environ.get("TYAGACH_STARTING_BALANCE", "2000"))
 
@@ -108,6 +108,11 @@ def _execute_open(d: portfolio_state.EntryDecision) -> None:
     repo.set_zone_signal_status(e.zone_key, "triggered")
     print(f"[loop] OPENED {e.kind} {d.option_side} {symbol} qty={result.filled_qty} "
           f"premium={sell_premium_received:.2f}", flush=True)
+    telegram_notify.notify_open(
+        zone_kind=e.kind, option_side=d.option_side, symbol=symbol, strike=actual_strike,
+        qty=result.filled_qty, premium_recv=sell_premium_received, fee=result.fees,
+        balance_now=repo.get_state()["balance_usdt"],
+    )
 
 
 def _tp_price(e, r_target: float) -> float:
@@ -148,6 +153,10 @@ def _execute_close(ex: portfolio_state.ExitDecision) -> None:
     repo.set_balance(new_balance)
     print(f"[loop] CLOSED {p['symbol']} reason={ex.exit_reason} net_pnl={net_pnl:.2f} "
           f"balance={new_balance:.2f}", flush=True)
+    telegram_notify.notify_close(
+        symbol=p["symbol"], reason=ex.exit_reason, pnl_net=net_pnl,
+        balance_after=new_balance, total_pnl_usd=new_balance - STARTING_BALANCE,
+    )
 
 
 def main() -> None:
