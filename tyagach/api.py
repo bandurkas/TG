@@ -10,7 +10,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from db import repo
-from services import market_data
+from services import execution, market_data
+from services.mark_pricing import cached_quote, enrich_positions_with_mark
 
 app = FastAPI(title="Tyagach API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -57,7 +58,16 @@ def get_state():
 
 @app.get("/api/v1/tyagach/positions")
 def get_positions(status: str | None = None, limit: int = 200):
-    return repo.get_positions(status=status, limit=limit)
+    rows = repo.get_positions(status=status, limit=limit)
+    try:
+        client = execution.get_client()
+    except execution.ExecutionError as e:
+        print(f"[api] positions mark enrichment skipped, no execution client: {e}", flush=True)
+        for r in rows:
+            r.setdefault("current_mark_usd", None)
+            r.setdefault("unrealized_pnl_usd", None)
+        return rows
+    return enrich_positions_with_mark(rows, lambda sym: cached_quote(client.get_quote, sym))
 
 
 @app.get("/api/v1/tyagach/chart")
