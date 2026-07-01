@@ -1,10 +1,17 @@
 """Online adaptation of smc_options/src/portfolio.py's conflict-resolution +
-sizing rules. The backtest version (`simulate()`) knows every candidate's
-exit_idx in advance because it's replaying history; live, candidates and
-exits arrive one tick at a time, so this module re-implements the same RULES
-(priority order, same-direction skip, per-zone/global caps, weight_pct
-sizing) against the actual open-positions table instead of a precomputed
-event list."""
+sizing rules, extended to per-TF sub-books.
+
+Architecture (A) — per-TF sub-books:
+  - same-direction conflict and per-zone caps are evaluated WITHIN a single TF.
+    A 2h-OB bullish position does NOT block a 15m-OB bullish — they live in
+    separate validated books.
+  - Sizing draws from the single shared balance (weight_pct * balance).
+  - A global ceiling (MAX_OPEN_TOTAL_GLOBAL + MAX_TOTAL_MARGIN_PCT) prevents
+    all TFs firing simultaneously from over-leveraging the account.
+
+The backtest version (`simulate()`) knows every candidate's exit_idx in
+advance; live, candidates and exits arrive one tick at a time, so this module
+re-implements the same RULES against the actual open-positions table."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -40,31 +47,53 @@ def rank_by_priority(entries: list[TriggeredEntry]) -> list[TriggeredEntry]:
     return sorted(entries, key=lambda e: (e.entry_ts_ms, config.PRIORITY[e.kind]))
 
 
-def decide_entries(entries: list[TriggeredEntry], balance: float, open_positions: list[dict],
-                    current_dvol: float) -> list[EntryDecision]:
-    """Applies conflict rules in priority order against a SNAPSHOT of
-    open_positions (the caller is responsible for actually opening each
-    approved entry and re-querying open_positions before the next batch, so
-    two approved-in-the-same-tick entries can't both claim the same global
-    slot — see loop.py)."""
+def decide_entries(
+    entries: list[TriggeredEntry],
+    balance: float,
+    tf_open_positions: list[dict],    # positions open in THIS TF's sub-book
+    all_open_positions: list[dict],   # ALL open positions (for global ceiling)
+    current_dvol: float,
+) -> list[EntryDecision]:
+    """Applies conflict rules in priority order.
+
+    Per-TF rules (use tf_open_positions):
+      - same-direction skip within the TF
+      - per-zone concurrency cap within the TF
+
+    Global ceiling (use all_open_positions + sim_all):
+      - MAX_OPEN_TOTAL_GLOBAL: hard slot cap across all TFs
+      - MAX_TOTAL_MARGIN_PCT: total open margin ≤ X% of balance
+
+    The caller is responsible for re-querying positions after each actual
+    open so two approved-same-tick entries can't both claim the same slot."""
     decisions: list[EntryDecision] = []
-    sim_open = list(open_positions)  # local copy we provisionally append to as we approve
+    sim_tf = list(tf_open_positions)    # provisional TF-scoped book
+    sim_all = list(all_open_positions)  # provisional global book
+
+    # Pre-compute current total margin from all already-open positions
+    current_total_margin = sum(
+        p.get("notional", 0.0) * config.MARGIN_PCT for p in all_open_positions
+    )
 
     for e in rank_by_priority(entries):
-        same_dir_conflict = any(p["direction"] == e.direction for p in sim_open)
+        # -- per-TF conflict rules --
+        same_dir_conflict = any(p["direction"] == e.direction for p in sim_tf)
         if same_dir_conflict:
             continue
-        per_zone_count = sum(1 for p in sim_open if p["zone_kind"] == e.kind)
+        per_zone_count = sum(1 for p in sim_tf if p["zone_kind"] == e.kind)
         if per_zone_count >= config.MAX_OPEN_PER_ZONE.get(e.kind, 0):
             continue
-        if len(sim_open) >= config.MAX_OPEN_TOTAL:
+
+        # -- global ceiling --
+        if len(sim_all) >= config.MAX_OPEN_TOTAL_GLOBAL:
             continue
         if balance <= 0:
             continue
 
+        # Size the candidate
         is_long = e.direction == "bullish"
-        option_side = "P" if is_long else "C"  # sell put for bullish zone, call for bearish
-        strike = e.entry_price  # ATM at signal
+        option_side = "P" if is_long else "C"
+        strike = e.entry_price
 
         budget = config.WEIGHT_PCT.get(e.kind, 0.0) * balance
         margin_per_lot = config.LOT_SIZE * e.entry_price * config.MARGIN_PCT
@@ -75,9 +104,16 @@ def decide_entries(entries: list[TriggeredEntry], balance: float, open_positions
         notional = num_units * e.entry_price
         margin_required = n_lots * margin_per_lot
 
-        decisions.append(EntryDecision(e, option_side, strike, n_lots, num_units, notional, margin_required,
-                                        current_dvol))
-        sim_open.append({"direction": e.direction, "zone_kind": e.kind})  # reserve the slot for the next candidate
+        # Check that adding this position stays under the total margin cap
+        if (current_total_margin + margin_required) > balance * config.MAX_TOTAL_MARGIN_PCT:
+            continue
+
+        decisions.append(EntryDecision(e, option_side, strike, n_lots, num_units, notional,
+                                        margin_required, current_dvol))
+        # Reserve slot in both scoped and global books for the next candidate
+        sim_tf.append({"direction": e.direction, "zone_kind": e.kind})
+        sim_all.append({"direction": e.direction, "zone_kind": e.kind})
+        current_total_margin += margin_required
 
     return decisions
 
@@ -88,7 +124,11 @@ class ExitDecision:
     exit_reason: str  # tp / sl / expiry
 
 
-def check_exits(open_positions: list[dict], latest_high: float, latest_low: float, now_ts_ms: int) -> list[ExitDecision]:
+def check_exits(open_positions: list[dict], latest_high: float, latest_low: float,
+                now_ts_ms: int) -> list[ExitDecision]:
+    """Check SL/TP/expiry for a list of positions against a single bar's high/low.
+    Caller passes only the positions that belong to the TF whose bar just closed
+    (per-TF exit fidelity) plus any positions expired by wall-clock."""
     out = []
     for p in open_positions:
         is_long = p["direction"] == "bullish"
@@ -102,6 +142,12 @@ def check_exits(open_positions: list[dict], latest_high: float, latest_low: floa
         elif expired:
             out.append(ExitDecision(p, "expiry"))
     return out
+
+
+def check_expiry_only(open_positions: list[dict], now_ts_ms: int) -> list[ExitDecision]:
+    """Wall-clock expiry sweep regardless of TF bar cadence — called once per
+    loop tick for ALL open positions so nothing is held past instrument expiry."""
+    return [ExitDecision(p, "expiry") for p in open_positions if now_ts_ms >= p["expiry_ts_ms"]]
 
 
 def fee(notional: float, premium_total: float) -> float:

@@ -2,9 +2,13 @@
 logic (smc_options/src/{structure,ob,bb,mb,zones}.py + options_backtest.py's
 `_find_midpoint_entry`). Detectors are pure functions over a DataFrame, so we
 simply re-run them on a rolling window every tick — cheap at a few thousand
-15m bars. Zone IDENTITY across ticks is timestamp-based (`zone_key`), not the
+bars. Zone IDENTITY across ticks is timestamp-based (`zone_key`), not the
 positional index the detectors use internally, since that index shifts every
-tick as the rolling window moves."""
+tick as the rolling window moves.
+
+Multi-TF: every public function now takes a `tf` label (e.g. "15m") and uses
+config.TIMEFRAMES[tf] for lookahead / stale thresholds.  zone_key is prefixed
+with the TF label to prevent cross-TF collisions."""
 from __future__ import annotations
 
 import sys
@@ -40,15 +44,18 @@ def detect_zones(df: pd.DataFrame) -> list[zones_mod.Zone]:
     return zones_mod.build_zones(obs, bbs, mbs)
 
 
-def zone_key(z: zones_mod.Zone, formed_ts_ms: int) -> str:
-    return f"{z.kind}:{z.direction}:{formed_ts_ms}:{z.zone_low:.6f}:{z.zone_high:.6f}"
+def zone_key(tf: str, z: zones_mod.Zone, formed_ts_ms: int) -> str:
+    return f"{tf}:{z.kind}:{z.direction}:{formed_ts_ms}:{z.zone_low:.6f}:{z.zone_high:.6f}"
 
 
-def sync_new_zones(df: pd.DataFrame) -> None:
+def sync_new_zones(df: pd.DataFrame, tf: str) -> None:
     """Detect zones on the current window and upsert any not already known.
+    Only upserts zones whose (tf, kind) pair is in config.ACTIVE_CELLS.
     Idempotent — INSERT OR IGNORE on zone_key."""
     detected = detect_zones(df)
     for z in detected:
+        if (tf, z.kind) not in config.ACTIVE_CELLS:
+            continue
         # zones.py's build_zones sets valid_from = formed_idx + 1 — a zone only
         # becomes tradeable the bar AFTER it confirms, never on the confirmation
         # bar itself. Skip zones whose next bar hasn't closed yet; they'll be
@@ -57,14 +64,15 @@ def sync_new_zones(df: pd.DataFrame) -> None:
             continue
         formed_ts_ms = int(df["ts_ms"].iloc[z.formed_idx])
         valid_from_ts_ms = int(df["ts_ms"].iloc[z.formed_idx + 1])
-        key = zone_key(z, formed_ts_ms)
-        repo.upsert_zone_signal(key, z.kind, z.direction, formed_ts_ms, valid_from_ts_ms,
-                                 z.zone_low, z.zone_high)
+        key = zone_key(tf, z, formed_ts_ms)
+        repo.upsert_zone_signal(key, tf, z.kind, z.direction, formed_ts_ms,
+                                 valid_from_ts_ms, z.zone_low, z.zone_high)
 
 
 @dataclass
 class TriggeredEntry:
     zone_key: str
+    timeframe: str
     kind: str
     direction: str
     entry_ts_ms: int
@@ -72,16 +80,13 @@ class TriggeredEntry:
     stop_price: float
 
 
-def scan_pending_zones(df: pd.DataFrame) -> list[TriggeredEntry]:
-    """For every zone_signals row still 'pending', scan closed bars from its
-    valid_from forward looking for (a) invalidation — close beyond the stop
-    buffer before any touch, (b) a midpoint touch — the trigger, or (c)
-    expiry of the lookahead window with neither. Mutates zone_signals status
-    in the DB (invalidated/expired) and returns newly triggered entries
-    (status is left 'pending' for those — the caller marks them 'triggered'
-    only after successfully acting on them, so a crash mid-tick doesn't lose
-    a signal)."""
-    pending = repo.get_pending_zone_signals()
+def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
+    """For every zone_signals row still 'pending' for this TF, scan closed bars
+    from its valid_from forward looking for (a) invalidation, (b) a midpoint
+    touch, or (c) expiry of the lookahead window. Uses the TF-specific
+    max_lookahead and stale_after from config.TIMEFRAMES."""
+    tf_cfg = config.TIMEFRAMES[tf]
+    pending = repo.get_pending_zone_signals(tf)
     if not pending or df.empty:
         return []
 
@@ -103,7 +108,7 @@ def scan_pending_zones(df: pd.DataFrame) -> list[TriggeredEntry]:
         mid = (zlo + zhi) / 2
         buf = config.BUFFER_FRAC * mid
         stop_price = (zlo - buf) if is_long else (zhi + buf)
-        end_idx = min(n - 1, start_idx + config.MAX_ZONE_LOOKAHEAD)
+        end_idx = min(n - 1, start_idx + tf_cfg.max_lookahead)
 
         resolved = False
         for i in range(start_idx, end_idx + 1):
@@ -117,18 +122,18 @@ def scan_pending_zones(df: pd.DataFrame) -> list[TriggeredEntry]:
                 break
             touched = (lows[i] <= mid) if is_long else (highs[i] >= mid)
             if touched:
-                if (n - 1 - i) > config.STALE_AFTER_BARS:
-                    # Too old to act on with today's quote (see config.STALE_AFTER_BARS) —
-                    # e.g. a multi-day cold-start backlog or outage gap. Expire it rather
-                    # than trading a historical touch against a live price that has nothing
-                    # to do with the signal's actual context.
+                if (n - 1 - i) > tf_cfg.stale_after:
+                    # Too old to act on with today's live quote — e.g. a cold-start
+                    # backlog. Expire rather than trade a historical touch against the
+                    # wrong price context.
                     repo.set_zone_signal_status(row["zone_key"], "expired")
                 else:
-                    triggered.append(TriggeredEntry(row["zone_key"], row["kind"], row["direction"],
-                                                     int(df["ts_ms"].iloc[i]), mid, stop_price))
+                    triggered.append(TriggeredEntry(row["zone_key"], tf, row["kind"],
+                                                     row["direction"], int(df["ts_ms"].iloc[i]),
+                                                     mid, stop_price))
                 resolved = True
                 break
-        if not resolved and end_idx >= start_idx + config.MAX_ZONE_LOOKAHEAD:
+        if not resolved and end_idx >= start_idx + tf_cfg.max_lookahead:
             repo.set_zone_signal_status(row["zone_key"], "expired")
 
     return triggered

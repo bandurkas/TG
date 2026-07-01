@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from db import repo
-from services import execution, market_data
+from services import config, execution, market_data
 from services.mark_pricing import cached_quote, enrich_positions_with_mark
 
 app = FastAPI(title="Tyagach API")
@@ -40,12 +40,14 @@ def get_state():
     stats = repo.get_position_stats()
     start_balance = state.get("start_balance_usdt") or 0.0
     history = repo.get_equity_history(limit=5000)
+    tf_cursors = {tf: repo.get_last_processed(tf) for tf in config.ACTIVE_TFS}
     return {
         "balance_usdt": state.get("balance_usdt"),
         "start_balance_usdt": start_balance,
         "started_at_ms": state.get("started_at_ms"),
         "paused": bool(state.get("paused")),
         "last_processed_ts_ms": state.get("last_processed_ts_ms"),
+        "tf_cursors": tf_cursors,
         "open_position_count": len(open_positions),
         "n_closed": stats["n_closed"],
         "wins": stats["wins"],
@@ -77,12 +79,13 @@ def get_chart(kline_limit: int = 288):
     into an approximate spot level), Tyagach's stop_price/tp_price ARE spot
     levels already — the R-multiple system operates directly on price, so no
     back-solving is needed here."""
-    klines = market_data.get_klines(limit=kline_limit)
+    klines = market_data.get_klines("15m")[-kline_limit:]
     spot = klines[-1]["close"] if klines else None
     open_positions = repo.get_open_positions()
     zones = [
         {
             "id": p["id"],
+            "timeframe": p.get("timeframe", "15m"),
             "zone_kind": p["zone_kind"],
             "direction": p["direction"],
             "option_side": p["option_side"],

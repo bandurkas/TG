@@ -7,8 +7,15 @@ CREATE TABLE IF NOT EXISTS bot_state (
     start_balance_usdt REAL NOT NULL DEFAULT 0,
     started_at_ms INTEGER,
     paused INTEGER NOT NULL DEFAULT 0,
-    last_processed_ts_ms INTEGER,
+    last_processed_ts_ms INTEGER,           -- legacy 15m cursor; canonical cursors in tf_state
     updated_at_ms INTEGER NOT NULL
+);
+
+-- Per-timeframe processing cursors.  Replaces the single last_processed_ts_ms
+-- in bot_state so each TF advances independently.
+CREATE TABLE IF NOT EXISTS tf_state (
+    timeframe TEXT PRIMARY KEY,
+    last_processed_ts_ms INTEGER NOT NULL
 );
 
 -- One row per zone the detectors have ever surfaced, keyed by a stable
@@ -16,7 +23,8 @@ CREATE TABLE IF NOT EXISTS bot_state (
 -- which shifts every tick). Prevents re-triggering the same zone twice and
 -- tracks whether it's still waiting for its midpoint touch.
 CREATE TABLE IF NOT EXISTS zone_signals (
-    zone_key TEXT PRIMARY KEY,         -- f"{kind}:{direction}:{formed_ts_ms}:{zone_low}:{zone_high}"
+    zone_key TEXT PRIMARY KEY,         -- f"{tf}:{kind}:{direction}:{formed_ts_ms}:{zone_low}:{zone_high}"
+    timeframe TEXT NOT NULL DEFAULT '15m',
     kind TEXT NOT NULL,                -- OB / BB / MB
     direction TEXT NOT NULL,           -- bullish / bearish
     formed_ts_ms INTEGER NOT NULL,
@@ -30,6 +38,7 @@ CREATE TABLE IF NOT EXISTS zone_signals (
 CREATE TABLE IF NOT EXISTS positions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     zone_key TEXT NOT NULL REFERENCES zone_signals(zone_key),
+    timeframe TEXT NOT NULL DEFAULT '15m',
     zone_kind TEXT NOT NULL,
     direction TEXT NOT NULL,           -- bullish / bearish (of the zone)
     option_side TEXT NOT NULL,         -- 'C' or 'P' sold

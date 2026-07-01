@@ -137,28 +137,34 @@ class ExecutionClient:
         step = float(instrument.get("lotSizeFilter", {}).get("qtyStep", config.LOT_SIZE))
         return round(round(qty / step) * step, 6)
 
-    def sell_to_open(self, symbol: str, qty: float, limit_price: float) -> OrderResult | None:
+    def sell_to_open(self, symbol: str, qty: float, limit_price: float,
+                      entry_spot: float = 0.0) -> OrderResult | None:
         if not config.is_live():
-            return self._paper_fill(symbol, qty, limit_price)
+            return self._paper_fill(symbol, qty, limit_price, entry_spot)
         return self._place_and_confirm(symbol, "Sell", qty, limit_price)
 
-    def buy_to_close(self, symbol: str, qty: float, limit_price: float) -> OrderResult | None:
+    def buy_to_close(self, symbol: str, qty: float, limit_price: float,
+                      entry_spot: float = 0.0) -> OrderResult | None:
         if not config.is_live():
-            return self._paper_fill(symbol, qty, limit_price)
+            return self._paper_fill(symbol, qty, limit_price, entry_spot)
         return self._place_and_confirm(symbol, "Buy", qty, limit_price)
 
-    def _paper_fill(self, symbol: str, qty: float, limit_price: float) -> OrderResult:
+    def _paper_fill(self, symbol: str, qty: float, limit_price: float,
+                     entry_spot: float = 0.0) -> OrderResult:
         """Simulated fill for paper mode — no place_order call, nothing
-        touches the real account's positions/balance. Fills the FULL
-        requested qty at the live quote passed in by the caller (the same
-        bid/ask `loop.py` would have submitted a real IOC order at), with a
-        fee estimate using the validated FEE_RATE/FEE_CAP_PCT applied to the
-        option premium notional (qty * limit_price) — this is the option
-        premium itself, not the underlying notional `portfolio.py`'s _fee()
-        uses, since paper fills here have no spot price on hand; treat it as
-        a reasonable stand-in, not the exact research formula."""
+        touches the real account's positions/balance.
+
+        Fee model: real Bybit options taker = 0.03% of UNDERLYING notional
+        (qty * spot price), capped at 12.5% of the option premium per side.
+        `entry_spot` is the ETH spot at entry/exit; if not supplied (legacy
+        callers) we fall back to the old premium-based estimate which the
+        caller comment explains is ~100x too low — always pass entry_spot."""
         premium_notional = qty * limit_price
-        fee = min(premium_notional * config.FEE_RATE, premium_notional * config.FEE_CAP_PCT)
+        if entry_spot > 0:
+            underlying_notional = qty * entry_spot
+        else:
+            underlying_notional = premium_notional  # fallback: same as old behaviour
+        fee = min(underlying_notional * config.FEE_RATE, premium_notional * config.FEE_CAP_PCT)
         order_id = f"PAPER-{uuid.uuid4().hex[:20]}"
         return OrderResult(order_id, limit_price, qty, fee, "Filled")
 
