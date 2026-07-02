@@ -127,6 +127,22 @@ def get_klines(tf: str = "15m") -> list[dict]:
     return closed
 
 
+def get_klines_for_chart(tf: str = "15m", limit: int = 288) -> list[dict]:
+    """Closed bars PLUS the live forming bar — for the dashboard chart ONLY.
+
+    The strategy path stays on get_klines() (closed bars): a forming bar in
+    the signal pipeline would repaint zones mid-bar. Without this, the chart
+    freezes for up to a full bar width between closes ("не тикает"). Fetches
+    just the 2 freshest bars per call; the caller must TTL-cache (api.py's
+    /chart does, 25s) so dashboard polling doesn't hit Bybit rate limits."""
+    closed = get_klines(tf)
+    fresh = _fetch_klines_paged(config.TIMEFRAMES[tf].interval, 2)
+    merged = {b["ts_ms"]: b for b in closed}
+    for b in fresh:
+        merged[b["ts_ms"]] = b
+    return sorted(merged.values(), key=lambda b: b["ts_ms"])[-limit:]
+
+
 def get_spot_price() -> float:
     resp = _public_session.get_tickers(category="linear", symbol=config.SYMBOL)
     return float(resp["result"]["list"][0]["lastPrice"])

@@ -72,14 +72,28 @@ def get_positions(status: str | None = None, limit: int = 200):
     return enrich_positions_with_mark(rows, lambda sym: cached_quote(client.get_quote, sym))
 
 
+# /chart TTL cache: the dashboard polls every 15s per open tab; without this
+# every poll would hit Bybit for the forming bar (rate-limit risk — 10006
+# already observed on this host 2026-07-02 00:00).
+_chart_cache: dict = {"ts": 0.0, "klines": []}
+
+
 @app.get("/api/v1/tyagach/chart")
 def get_chart(kline_limit: int = 288):
     """Candlestick data + open positions' entry/stop/tp SPOT price levels.
     Unlike the straddle bots' /chart (which back-solves an option-premium SL
     into an approximate spot level), Tyagach's stop_price/tp_price ARE spot
     levels already — the R-multiple system operates directly on price, so no
-    back-solving is needed here."""
-    klines = market_data.get_klines("15m")[-kline_limit:]
+    back-solving is needed here.
+
+    Uses get_klines_for_chart (closed bars + live forming bar) so the chart
+    ticks between 15m closes instead of freezing for a full bar width."""
+    import time as _t
+    now = _t.time()
+    if now - _chart_cache["ts"] > 25:
+        _chart_cache.update(ts=now,
+                            klines=market_data.get_klines_for_chart("15m", 1000))
+    klines = _chart_cache["klines"][-kline_limit:]
     spot = klines[-1]["close"] if klines else None
     open_positions = repo.get_open_positions()
     zones = [
