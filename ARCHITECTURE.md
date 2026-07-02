@@ -185,6 +185,35 @@ config is structurally profitable and internally consistent," not as an
 APR forecast — same caveat as every other backtest number in this repo
 (see [[feedback_edge_eval_vs_opportunity_cost]]).
 
+**Follow-on research (2026-07-03, same day): 3 directions, in order**
+
+1. **Sizing/caps grid search** (`src/tyagach_portfolio_gridsearch.py`,
+   `results/tyagach_gridsearch_*.csv`) — swept `weight_pct`/`max_open_per_zone`/
+   `MAX_OPEN_TOTAL_GLOBAL` around the live values on the 6-cell multi-TF
+   candidate set. Finding: `total_return_pct` increases **monotonically**
+   with every weight parameter, with no interior optimum, and the per-zone/
+   global caps never bound the top results (identical stats at cap=4 and
+   cap=12). This is the classic unconstrained-compounding artifact — with
+   percent-of-balance sizing over thousands of trades, "size bigger" always
+   wins in a backtest that has no market-depth/capacity ceiling. Confirms
+   (doesn't newly discover) why `WEIGHT_PCT` in `config.py` is already
+   commented "manually chosen (NOT the raw grid-search optimum)". **No change
+   made** — the live weights are correct as-is; the grid search is not a
+   usable tool for this question without a capacity constraint the codebase
+   doesn't model.
+2. **Per-cell `CELL_CONFIG` rebuild** — deferred, per the user's own standing
+   rule in [[project_tyagach_engine_rebuild]] (wait for 20-30 live cycles per
+   cell; currently 6 total live trades). Not attempted.
+3. **5m TF re-check** (`src/tyagach_5m_revisit.py`,
+   `results/sweep_5m_revisit.csv`) — previously excluded as "gross < fee" at
+   the old higher thresholds; re-ran at the new lower thresholds [50-75] with
+   the same all-3-splits-positive bar applied from the start. OB negative on
+   train+validation+holdout at every threshold; BB negative almost
+   everywhere; MB near-breakeven on train/holdout but negative on validation
+   at every threshold (same failure pattern as `15m/OB`/`30m/MB` above).
+   **Stays excluded** — confirmed under the corrected methodology, not just
+   inherited from the old one.
+
 **Review pass #2 caught a real bug this change would have silently missed:**
 `signal_engine.sync_new_zones` already gated zone *creation* on
 `config.ACTIVE_CELLS`, but `scan_pending_zones` (the trigger path) evaluated
