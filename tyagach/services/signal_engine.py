@@ -84,10 +84,25 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
     """For every zone_signals row still 'pending' for this TF, scan closed bars
     from its valid_from forward looking for (a) invalidation, (b) a midpoint
     touch, or (c) expiry of the lookahead window. Uses the TF-specific
-    max_lookahead and stale_after from config.TIMEFRAMES."""
+    max_lookahead and stale_after from config.TIMEFRAMES.
+
+    A (tf, kind) pair can be removed from config.ACTIVE_CELLS after a signal
+    was already stored as 'pending' (e.g. a live config re-review). Expire
+    those here too — sync_new_zones only blocks new rows from being created,
+    it doesn't retroactively stop ones already pending from triggering."""
     tf_cfg = config.TIMEFRAMES[tf]
     pending = repo.get_pending_zone_signals(tf)
     if not pending or df.empty:
+        return []
+
+    still_active = []
+    for row in pending:
+        if (tf, row["kind"]) not in config.ACTIVE_CELLS:
+            repo.set_zone_signal_status(row["zone_key"], "expired")
+        else:
+            still_active.append(row)
+    pending = still_active
+    if not pending:
         return []
 
     ts_to_idx = {int(ts): i for i, ts in enumerate(df["ts_ms"].values)}

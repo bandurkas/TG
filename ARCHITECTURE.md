@@ -122,6 +122,46 @@ Full code review run before any testnet execution (8 finder angles + verify).
   prices off real Bybit quotes, not a BS model) — kept for potential future
   analytics, not dead-code-deleted.
 
+## Amendment (2026-07-03): cell/threshold admission criterion
+
+The 2026-07-03 IV-threshold session (commit `205ac32`) picked
+`ACTIVE_CELLS` and per-kind `iv_threshold` by reading only the **holdout**
+column of `results/sweep_iv_lower_multitf.csv` (the sweep script's own
+verdict logic filters `split == "holdout"` before printing). This skipped
+the review step entirely — went straight from sweep → config edit → deploy,
+no review commit (unlike the initial build's `1940be8`), no
+`ARCHITECTURE.md` update. Re-reading all three splits (train/validation/
+holdout) surfaced: `15m/OB` negative on train AND validation (validation
+n=700+, not small-sample noise), only positive on holdout; `30m/MB` and
+`30m/BB` (both added this session) negative on validation, positive on
+train+holdout.
+
+**Rule going forward:** a (tf, kind, iv_threshold) cell is only admitted
+into `ACTIVE_CELLS` if `avg_net_$` (fee-adjusted) is positive in **all
+three** splits — train, validation, and holdout — not holdout alone.
+Holdout-only agreement with a negative validation is treated as likely
+overfit/noise, not edge. This mirrors the walk-forward-consistency bar
+already applied to Sniper1/Boba1 (see [[feedback_backtest_methodology_pitfalls]]
+and [[feedback_check_backtest_population_before_deploy]]) — Tyagach's
+config tuning had not been held to the same bar until this amendment.
+
+Applying this bar removes `("15m","OB")` (pre-existing, negative on
+train+validation, never previously re-validated), `("30m","MB")` and
+`("30m","BB")` (both added same-day on 2026-07-03, negative on validation)
+from `ACTIVE_CELLS`. `("2h","MB")` — this session's strongest genuine find —
+passes on all 3 splits and stays. `("1h","OB")` only passes at iv≥75 with
+n=13 on validation, too thin to trust; stays excluded.
+
+**Review pass #2 caught a real bug this change would have silently missed:**
+`signal_engine.sync_new_zones` already gated zone *creation* on
+`config.ACTIVE_CELLS`, but `scan_pending_zones` (the trigger path) evaluated
+every `status='pending'` row for the TF with no such check — a zone_signal
+row created while a cell was active would keep triggering trades after that
+cell was removed from `ACTIVE_CELLS`. At review time there were 3 such rows
+live (`15m/OB` ×2, `30m/MB` ×1). Fixed: `scan_pending_zones` now expires any
+pending row whose `(tf, kind)` isn't in `ACTIVE_CELLS` before evaluating it.
+Regression test: `tests/test_active_cells_filter.py`.
+
 ## Next (step 2 of workflow: code)
 
 1. New testnet Bybit API key (user to create on testnet.bybit.com, OptionsTrade perm).
