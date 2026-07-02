@@ -1,0 +1,4 @@
+split,days,n_candidates,n_closed,trades_per_day,total_return_pct,approx_apr_pct,max_dd_pct,calmar,final_balance
+train,882,3225,2521,2.86,895.7,158.7,15.0,59.64,19914.8
+validation,294,1550,1205,4.1,62.0,82.0,11.4,5.46,3241.0
+holdout,294,1340,1048,3.56,117.8,162.7,10.3,11.48,4355.7

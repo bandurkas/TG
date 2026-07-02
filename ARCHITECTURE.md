@@ -152,6 +152,39 @@ from `ACTIVE_CELLS`. `("2h","MB")` — this session's strongest genuine find —
 passes on all 3 splits and stays. `("1h","OB")` only passes at iv≥75 with
 n=13 on validation, too thin to trust; stays excluded.
 
+**Full portfolio-level validation of the deployed config (2026-07-03, `src/tyagach_portfolio_multitf.py`):**
+The per-cell sweep above only checks each cell's own avg_net_$ in isolation —
+it doesn't capture compounding or the real concurrency caps
+(`MAX_OPEN_PER_ZONE`, `MAX_OPEN_TOTAL_GLOBAL=8`, same-direction blocking,
+BB>MB>OB priority) that the live bot actually enforces across all 6 active
+cells sharing one balance. Re-ran the same event-driven engine
+(`portfolio.py`'s `Candidate`/`PortfolioConfig`/`simulate`/`stats`) that
+produced the original single-TF 39.6% APR figure in `TYAGACH_HANDOFF.md`,
+this time merging candidates from all 4 TFs on one absolute-timestamp
+timeline (not each TF's own positional bar index) so cross-TF concurrency
+resolves correctly. Result — `results/tyagach_portfolio_multitf_confirmed.csv`:
+
+| split | days | n_closed | trades/day | return | approx APR | maxDD | Calmar |
+|---|---|---|---|---|---|---|---|
+| train | 882 | 2521 | 2.86 | +895.7% | +158.7% | 15.0% | 59.6 |
+| validation | 294 | 1205 | 4.10 | +62.0% | +82.0% | 11.4% | 5.5 |
+| holdout | 294 | 1048 | 3.56 | +117.8% | +162.7% | 10.3% | 11.5 |
+
+Positive on all 3 splits (passes the amendment's own admission bar, applied
+at the portfolio level this time) — no train/validation/holdout sign flip
+like the per-cell issue above. Trades/day (2.9-4.1) lands close to the
+original single-TF estimate (~2.7/day, from the "~80/month" figure in
+`TYAGACH_HANDOFF.md`), confirming the multi-TF + threshold-lowering +
+cell-correction work did not undershoot that baseline. approx APR is
+annualized simple compounding on the split's own return — **not a real
+forward-looking target**: no bid-ask spread/slippage modeled (only the flat
+Bybit fee schedule), and `weight_pct`-of-balance sizing compounding
+indefinitely will eventually hit real option-market liquidity limits well
+before scaling to the balances implied by these returns. Treat as "this
+config is structurally profitable and internally consistent," not as an
+APR forecast — same caveat as every other backtest number in this repo
+(see [[feedback_edge_eval_vs_opportunity_cost]]).
+
 **Review pass #2 caught a real bug this change would have silently missed:**
 `signal_engine.sync_new_zones` already gated zone *creation* on
 `config.ACTIVE_CELLS`, but `scan_pending_zones` (the trigger path) evaluated
