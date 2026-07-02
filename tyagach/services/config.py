@@ -25,10 +25,14 @@ BUFFER_FRAC = 0.0015  # SL buffer beyond zone edge, same as options_backtest.py
 # Per-zone validated config: R-target, expiry (days), entry IV threshold (DVOL %).
 # Same values apply regardless of timeframe — the backtest confirmed the deployed
 # per-zone config transfers to all active TFs without re-optimisation.
+# IV thresholds lowered 2026-07-03 based on extended sweep (sweep_iv_lower_multitf.csv):
+#   OB: 60→50 (holdout +$0.18→+$0.14 at iv≥50, more trades, net+ confirmed)
+#   MB: 70→50 (holdout +$0.67→+$0.92 at iv≥50, more trades AND better quality)
+#   BB: 60→55 (holdout +$1.32→+$1.55 at iv≥55, 30m/BB at iv≥50 too weak +$0.13)
 ZONE_CONFIG = {
-    "OB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 60.0},
-    "MB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 70.0},
-    "BB": {"r_target": 2.5, "expiry_days": 5.0, "iv_threshold": 60.0},
+    "OB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0},
+    "MB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0},
+    "BB": {"r_target": 2.5, "expiry_days": 5.0, "iv_threshold": 55.0},
 }
 
 # Portfolio allocation — manually chosen (NOT the raw grid-search optimum),
@@ -76,15 +80,17 @@ TIMEFRAMES: dict[str, TF] = {
 }
 
 # Which (tf, zone_kind) cells are active for trading.
-# Derived from the net-of-fee multi-TF backtest (2026-07-02):
+# Derived from the net-of-fee multi-TF backtest (2026-07-02) + IV-threshold sweep (2026-07-03):
 #   5m — dead (gross < round-trip fee)
-#   15m OB/MB — sign-flip under realistic fee; kept for continuity with live history
-#   Newly added: 30m-OB, 1h-MB, 2h-OB (all NET+ on train/val/hold)
+#   15m OB/MB/BB — net+ confirmed on holdout at iv≥50 (OB barely: +$0.14, MB: +$0.92, BB: +$1.70)
+#   30m OB/MB/BB — net+ on holdout (OB: +$0.66, MB: +$1.70, BB: +$0.67 at iv≥55)
+#   1h  MB — net+ (strong: +$4.64); 1h OB/BB negative — excluded
+#   2h  OB — net+ (+$1.33); 2h MB — very strong (+$6.57); 2h BB negative — excluded
 ACTIVE_CELLS: frozenset[tuple[str, str]] = frozenset({
     ("15m", "OB"), ("15m", "MB"), ("15m", "BB"),
-    ("30m", "OB"),
+    ("30m", "OB"), ("30m", "MB"), ("30m", "BB"),
     ("1h",  "MB"),
-    ("2h",  "OB"),
+    ("2h",  "OB"), ("2h",  "MB"),
 })
 
 # Ordered list of active TFs (determines loop processing order each tick)
