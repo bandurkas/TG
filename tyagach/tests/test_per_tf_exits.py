@@ -68,6 +68,30 @@ def test_sl_takes_priority_over_tp_in_same_bar():
     assert len(exits) == 1 and exits[0].exit_reason == "sl"
 
 
+def test_point_check_tp_hit_bullish():
+    # loop._sweep_realtime_exits passes a single live spot price as BOTH
+    # latest_high and latest_low (no bar range available, just one quote) --
+    # confirm that degenerate case still resolves TP/SL correctly.
+    spot = 1705.0
+    exits = ps.check_exits([_pos(direction="bullish", stop_price=1400.0, tp_price=1700.0)],
+                            latest_high=spot, latest_low=spot, now_ts_ms=1000)
+    assert len(exits) == 1 and exits[0].exit_reason == "tp"
+
+
+def test_point_check_sl_hit_bearish():
+    spot = 1605.0
+    exits = ps.check_exits([_pos(direction="bearish", stop_price=1600.0, tp_price=1300.0)],
+                            latest_high=spot, latest_low=spot, now_ts_ms=1000)
+    assert len(exits) == 1 and exits[0].exit_reason == "sl"
+
+
+def test_point_check_no_hit_when_spot_inside_range():
+    spot = 1550.0
+    exits = ps.check_exits([_pos(direction="bullish", stop_price=1400.0, tp_price=1700.0)],
+                            latest_high=spot, latest_low=spot, now_ts_ms=1000)
+    assert exits == []
+
+
 def test_expiry_exit():
     exits = ps.check_exits([_pos(expiry_ts_ms=1000)],
                             latest_high=1500.0, latest_low=1490.0, now_ts_ms=2000)

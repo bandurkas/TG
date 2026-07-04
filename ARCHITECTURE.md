@@ -224,6 +224,33 @@ live (`15m/OB` ×2, `30m/MB` ×1). Fixed: `scan_pending_zones` now expires any
 pending row whose `(tf, kind)` isn't in `ACTIVE_CELLS` before evaluating it.
 Regression test: `tests/test_active_cells_filter.py`.
 
+## Amendment (2026-07-04): realtime SL/TP sweep
+
+Found live: a `1h/MB` position sat open ~85 minutes after spot traded ~$20
+past its TP, because the per-TF bar-close exit check (`_process_tf`) only
+fires when THAT position's own TF closes a bar — up to a full bar width of
+detection lag (worst case) for slower TFs (2h → up to 2h). Manually closed
+that position via `loop._execute_close` at the live quote (net +$6.93).
+
+Fix: `loop._sweep_realtime_exits()`, called every tick alongside
+`_sweep_real_expiry()`, checks SL/TP for ALL open positions against the
+current live spot (`market_data.get_spot_price()`), reusing
+`portfolio_state.check_exits(all_open, spot, spot, now_ms)` — same function,
+just called with a single point instead of a bar's high/low. Cuts worst-case
+detection lag from up to one bar width down to ~`POLL_SECONDS` (60s).
+
+Why this doesn't require re-validating the backtested edge: `_execute_close`
+already fills against a LIVE quote fetched at close time, not the historical
+bar's close price — the bar's high/low was only ever used as the *trigger*
+condition, never the fill price. Checking that same trigger condition more
+often only tightens reaction latency; it doesn't change what triggers a
+close or what price it fills at. Entry/signal logic (zone detection,
+r_target, expiry, IV threshold) is untouched. The per-TF bar-close check
+still runs too — redundant in the common case (position usually already
+closed by the realtime sweep) but kept as a safety net for a failed spot
+fetch, and to match how each cell's exit was originally backtested.
+Regression test: `test_point_check_*` in `tests/test_per_tf_exits.py`.
+
 ## Next (step 2 of workflow: code)
 
 1. New testnet Bybit API key (user to create on testnet.bybit.com, OptionsTrade perm).

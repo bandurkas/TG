@@ -1,10 +1,14 @@
 """Tyagach main loop. Wakes every config.POLL_SECONDS. Each wake:
   1. Real-expiry sweep — close any open position past its instrument expiry,
      regardless of TF cadence (so nothing is held past the actual option expiry).
-  2. For each active TF whose bar(s) have closed since its cursor:
+  2. Realtime exit sweep — check SL/TP for ALL open positions against the
+     live spot price, regardless of TF cadence (so a position can't sit past
+     its TP/SL for up to a full bar width waiting on its own TF to close).
+  3. For each active TF whose bar(s) have closed since its cursor:
        a. sync_new_zones + scan_pending_zones on the rolling window.
-       b. Walk new bars chronologically: check SL/TP for that TF's positions,
-          then evaluate entry signals for that bar.
+       b. Walk new bars chronologically: check SL/TP for that TF's positions
+          (redundant with #2 in the common case, kept as a safety net + to
+          match how each cell was backtested), then evaluate entry signals.
        c. Advance the TF cursor.
 
 Per-TF sub-books (architecture decision A): same-direction conflict and
@@ -84,6 +88,32 @@ def _sweep_real_expiry(now_ms: int) -> None:
     all_open = repo.get_open_positions()
     expired = portfolio_state.check_expiry_only(all_open, now_ms)
     for ex in expired:
+        _execute_close(ex)
+
+
+def _sweep_realtime_exits(now_ms: int) -> None:
+    """Check SL/TP for ALL open positions against the LIVE spot price on
+    every tick, regardless of which TF's bar last closed. Added 2026-07-04:
+    the per-TF bar-close check in _process_tf only fires when THAT position's
+    own TF closes a bar (e.g. once an hour for a 1h position) -- a position
+    could sit well past its TP for up to a full bar width before being acted
+    on (a 1h/MB position was caught ~85 min after TP with spot ~$20 past it).
+    Real fills already use a live quote fetched at close time (not the bar's
+    close price), so tightening the *detection* cadence doesn't retest the
+    backtested edge -- entries/signal logic are untouched, this only cuts
+    exit reaction latency from up to one bar width down to ~POLL_SECONDS.
+    The per-TF bar-close check still runs too (kept for parity with how each
+    cell was backtested, and as a safety net if a spot fetch here fails)."""
+    all_open = repo.get_open_positions()
+    if not all_open:
+        return
+    try:
+        spot = market_data.get_spot_price()
+    except Exception as e:  # noqa: BLE001
+        print(f"[loop] realtime exit sweep: get_spot_price failed: {e!r}", flush=True)
+        return
+    exits = portfolio_state.check_exits(all_open, spot, spot, now_ms)
+    for ex in exits:
         _execute_close(ex)
 
 
@@ -198,6 +228,7 @@ def main() -> None:
         try:
             now_ms = int(time.time() * 1000)
             _sweep_real_expiry(now_ms)
+            _sweep_realtime_exits(now_ms)
             for tf in config.ACTIVE_TFS:
                 try:
                     _process_tf(tf, now_ms)
