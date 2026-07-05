@@ -251,6 +251,37 @@ closed by the realtime sweep) but kept as a safety net for a failed spot
 fetch, and to match how each cell's exit was originally backtested.
 Regression test: `test_point_check_*` in `tests/test_per_tf_exits.py`.
 
+## Amendment (2026-07-05): cross-TF same-direction stacking — investigated, kept
+
+Overnight 07-04→07-05, three bullish MB positions (15m/1h/2h, all short
+~$1775 puts) were open simultaneously and hit SL together: −$27.9 total.
+Investigation:
+
+- **Exit mechanics verified correct** against raw klines: each SL fired when
+  spot crossed its stop, and the new realtime sweep closed them mid-bar
+  (01:17, 02:13) rather than waiting for bar close. Entries were per spec
+  (MB zone touch, IV 53-54 > 50).
+- **Real discrepancy found**: research `portfolio.py` blocks same-direction
+  entries globally ("avoids doubling correlated exposure") — and the 07-03
+  portfolio validation used exactly that rule. Live `decide_entries` blocks
+  same-direction only within a TF sub-book (architecture decision A,
+  07-02) — cross-TF stacking allowed. So live and the validated backtest
+  disagreed on a rule that directly caused this loss cluster.
+- **A/B quantified** (`src/tyagach_samedir_ab.py`): same candidate set, same
+  engine, only the same-dir scope flipped. The global arm reproduces the
+  07-03 validation numbers exactly (harness sanity check passes). Result:
+  per-TF stacking (live behavior) WINS on all three splits — train +1584%
+  vs +896%, validation +97% vs +62%, holdout +215% vs +118% with LOWER
+  holdout maxDD (9.5% vs 10.3%). Train maxDD is deeper (22.5% vs 15.0%) —
+  correlated loss clusters like tonight's are the recurring cost, and
+  they're already priced into the winning arm.
+
+**Decision: keep live behavior unchanged.** The 07-03 validation table
+above understates the live config (it modeled the stricter rule);
+live-accurate expected figures are the per_tf rows. Constant-sigma BS
+repricing inflates absolute numbers equally in both arms — the comparison
+is valid even though neither absolute figure is a forecast.
+
 ## Next (step 2 of workflow: code)
 
 1. New testnet Bybit API key (user to create on testnet.bybit.com, OptionsTrade perm).
