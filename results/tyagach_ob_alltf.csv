@@ -1,0 +1,7 @@
+config,split,n_closed,trades_per_day,return_pct,max_dd_pct,calmar,final_balance
+old,train,2938,3.33,1584.31,22.53,70.332,33686.2
+old,validation,1397,4.75,96.76,13.37,7.239,3935.2
+old,holdout,1235,4.2,215.04,9.54,22.55,6300.7
+new,train,3062,3.47,141.92,12.15,11.685,4838.5
+new,validation,1458,4.96,37.51,9.65,3.886,2750.2
+new,holdout,1261,4.29,51.14,8.58,5.963,3022.8

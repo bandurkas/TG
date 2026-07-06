@@ -51,13 +51,17 @@ def test_every_message_tagged_tyagach():
 def test_notify_open_format():
     sent, oe, op = _capture()
     try:
-        tn.notify_open(zone_kind="BB", option_side="P", symbol="ETH-3JUL26-1575-P-USDT",
-                       strike=1575.0, qty=2.3, premium_recv=114.08, fee=0.34, balance_now=2004.02)
+        tn.notify_open(timeframe="15m", zone_kind="BB", option_side="P",
+                       symbol="ETH-3JUL26-1575-P-USDT", strike=1575.0, qty=2.3,
+                       premium_recv=114.08, fee=0.34,
+                       tp_price=1642.55, stop_price=1548.10, balance_now=2004.02)
     finally:
         _restore(oe, op)
     text = sent[0]
     assert "[Tyagach]" in text
-    assert "OPENED" in text and "BB SELL PUT" in text
+    assert "OPENED" in text and "15m/BB SELL PUT" in text
+    assert "TP: <b>$1642.55</b>" in text
+    assert "SL: $1548.10" in text
     assert "Premium received: <b>$114.08</b>" in text
     assert "Balance now: <b>$2004.02</b>" in text
 

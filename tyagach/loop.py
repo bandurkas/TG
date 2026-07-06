@@ -150,13 +150,14 @@ def _execute_open(d: portfolio_state.EntryDecision) -> None:
     actual_strike = float(symbol.split("-")[2])
     expiry_ms = int(instrument["deliveryTime"])
     sell_premium_received = result.avg_price * result.filled_qty
+    tp_price = _tp_price(e, cfg["r_target"])
 
     repo.open_position(
         zone_key=e.zone_key, timeframe=e.timeframe, zone_kind=e.kind,
         direction=e.direction, option_side=d.option_side,
         symbol=symbol, strike=actual_strike, entry_ts_ms=e.entry_ts_ms,
         entry_spot=entry_spot, stop_price=e.stop_price,
-        tp_price=_tp_price(e, cfg["r_target"]),
+        tp_price=tp_price,
         expiry_ts_ms=expiry_ms, iv_entry=d.iv_entry,
         num_units=result.filled_qty, notional=result.filled_qty * entry_spot,
         sell_premium_received=sell_premium_received, open_fee=result.fees,
@@ -166,8 +167,10 @@ def _execute_open(d: portfolio_state.EntryDecision) -> None:
     print(f"[loop] OPENED {e.timeframe}/{e.kind} {d.option_side} {symbol} "
           f"qty={result.filled_qty} premium={sell_premium_received:.2f}", flush=True)
     telegram_notify.notify_open(
-        zone_kind=e.kind, option_side=d.option_side, symbol=symbol, strike=actual_strike,
+        timeframe=e.timeframe, zone_kind=e.kind, option_side=d.option_side,
+        symbol=symbol, strike=actual_strike,
         qty=result.filled_qty, premium_recv=sell_premium_received, fee=result.fees,
+        tp_price=tp_price, stop_price=e.stop_price,
         balance_now=repo.get_state()["balance_usdt"],
     )
 

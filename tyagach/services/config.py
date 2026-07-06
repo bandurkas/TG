@@ -28,9 +28,10 @@ BUFFER_FRAC = 0.0015  # SL buffer beyond zone edge, same as options_backtest.py
 # IV thresholds lowered 2026-07-03 based on extended sweep (sweep_iv_lower_multitf.csv),
 # re-confirmed 2026-07-03 (review pass) against all three splits (train/validation/
 # holdout), not holdout alone — see ARCHITECTURE.md "Amendment 2026-07-03":
-#   OB: 60→50 (30m/OB, 2h/OB — the only active OB cells — both net+ on all 3 splits at iv≥50)
-#   MB: 70→50 (15m/MB, 1h/MB, 2h/MB — all net+ on all 3 splits at iv≥50)
-#   BB: 60→55 (15m/BB — the only active BB cell — net+ on all 3 splits at iv≥55; NOT at iv≥50)
+#   OB: 60→50   BB: 60→55 (BB net+ on all 3 splits at iv≥55, NOT at iv≥50)
+#   MB: 70→50 — MB cells deactivated 2026-07-07 (live override, see ACTIVE_CELLS
+#     below); the entry is kept so a future re-activation reuses validated values.
+# Which cells actually trade is governed solely by ACTIVE_CELLS.
 ZONE_CONFIG = {
     "OB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0},
     "MB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0},
@@ -82,24 +83,25 @@ TIMEFRAMES: dict[str, TF] = {
 }
 
 # Which (tf, zone_kind) cells are active for trading.
-# Re-derived 2026-07-03 (review pass, see ARCHITECTURE.md "Amendment
-# 2026-07-03"): admission requires avg_net_$ (fee-adjusted) positive in ALL
-# THREE splits (train, validation, holdout) of sweep_iv_lower_multitf.csv,
-# not holdout alone. Holdout-only agreement with a negative validation split
-# is treated as overfit noise.
-#   5m — dead (gross < round-trip fee)
-#   15m MB/BB, 30m OB, 1h MB, 2h OB/MB — pass all 3 splits down to iv_threshold=50
-#     (BB only passes at 55/60/70, not 50 or 65 — non-monotonic in the data)
-#   15m OB — EXCLUDED: negative on train AND validation (n=700+), holdout-only positive
-#   30m MB, 30m BB — EXCLUDED: negative on validation despite positive train+holdout
-#     (both were added on 2026-07-03 based on holdout alone; removed same day on re-review)
-#   1h OB — EXCLUDED: only passes at iv_threshold=75, n=13 on validation (too thin)
-#   1h BB, 2h BB — EXCLUDED: negative on validation at every threshold
+# Re-derived 2026-07-07 (see ARCHITECTURE.md "Amendment 2026-07-07"): the
+# first live sample (21 closed paper trades) showed MB as the sole bleeder
+# (15 trades, -$33.72, last 8 closes all MB) while OB was the only
+# live-profitable kind (5 trades, +$12.15, 4/5 wins). User decision:
+#   MB — DEACTIVATED entirely (live-performance override of the backtest,
+#     where MB cells passed all 3 splits; live contradicts them).
+#   OB — enabled on ALL four TFs. DELIBERATE OVERRIDE of the 2026-07-03
+#     all-3-splits admission criterion: 15m/OB and 1h/OB FAIL it
+#     (sweep_iv_lower_multitf.csv), included anyway by explicit user call
+#     prioritizing live evidence + trade frequency. Portfolio backtest of
+#     this exact set is still positive on all 3 splits with lower maxDD
+#     (results/tyagach_ob_alltf.csv). Revisit after ~20-30 OB closes/cell.
+#   15m/BB — kept (passes all 3 splits at iv>=55; only 1 live trade so far).
+#   5m — still dead (gross < round-trip fee).
 ACTIVE_CELLS: frozenset[tuple[str, str]] = frozenset({
-    ("15m", "MB"), ("15m", "BB"),
+    ("15m", "OB"), ("15m", "BB"),
     ("30m", "OB"),
-    ("1h",  "MB"),
-    ("2h",  "OB"), ("2h",  "MB"),
+    ("1h",  "OB"),
+    ("2h",  "OB"),
 })
 
 # Ordered list of active TFs (determines loop processing order each tick)

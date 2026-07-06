@@ -282,6 +282,60 @@ live-accurate expected figures are the per_tf rows. Constant-sigma BS
 repricing inflates absolute numbers equally in both arms — the comparison
 is valid even though neither absolute figure is a forecast.
 
+## Amendment (2026-07-07): MB deactivated (live override), OB on all TFs
+
+First live sample (21 closed paper trades, 2026-06-26 → 07-07, balance
+$2000 → $1976.07) split sharply by zone kind:
+
+| kind | n  | net P&L  | wins |
+|------|----|----------|------|
+| MB   | 15 | −$33.72  | 6/15 |
+| OB   | 5  | +$12.15  | 4/5  |
+| BB   | 1  | −$2.37   | 0/1  |
+
+The last 8 closes in a row were all MB (mostly SL). User decision:
+**deactivate MB entirely** (15m/MB, 1h/MB, 2h/MB out), **keep 15m/BB**,
+and **enable OB on all four TFs** (15m/30m/1h/2h — previously only
+30m/2h).
+
+New `ACTIVE_CELLS = {15m/OB, 30m/OB, 1h/OB, 2h/OB, 15m/BB}`.
+
+**Explicit admission-criterion override.** Per the historical sweep
+(`sweep_iv_lower_multitf.csv`, avg_net_$ at the live iv thresholds),
+15m/OB fails (train −0.01, validation −0.39, holdout +0.14) and 1h/OB
+fails (train +1.69, validation −1.74, holdout −0.47); 30m/OB and 2h/OB
+pass all 3 splits. The user chose to include the failing OB cells anyway,
+prioritizing live evidence (OB is the only live-profitable kind; 15m/OB
+made +$13.44 in 4 trades while active pre-07-03) and trade frequency over
+the 4-year backtest. This is a deliberate, documented deviation from the
+2026-07-03 admission rule, decided by the user on 2026-07-07 — not a
+methodology regression. Revisit against live data after ~20-30 OB closes
+per cell.
+
+**Portfolio backtest of the chosen config** (`src/tyagach_ob_alltf_backtest.py`,
+same per_tf engine as the 07-05 A/B, which reproduces prior tables exactly;
+old = 07-03 cells, new = this amendment; `results/tyagach_ob_alltf.csv`):
+
+| config | split      | trades/day | return  | maxDD | calmar |
+|--------|------------|-----------:|--------:|------:|-------:|
+| old    | train      | 3.33       | +1584%  | 22.5% | 70.3   |
+| old    | validation | 4.75       | +97%    | 13.4% | 7.2    |
+| old    | holdout    | 4.20       | +215%   | 9.5%  | 22.6   |
+| new    | train      | 3.47       | +142%   | 12.2% | 11.7   |
+| new    | validation | 4.96       | +37%    | 9.7%  | 3.9    |
+| new    | holdout    | 4.29       | +51%    | 8.6%  | 6.0    |
+
+The new config is portfolio-positive on all three splits (the failing OB
+cells drag but don't sink it) with lower maxDD everywhere, at 3.5-5
+trades/day. It backtests well below the old config — expected, since the
+old config's historical numbers lean on MB, which is exactly what live
+performance contradicts. Constant-sigma BS repricing caveat applies as
+always: relative comparison valid, absolute figures are not forecasts.
+
+Also in this change: `notify_open` Telegram message now includes the
+entry's TF/kind, TP and SL prices (with 4 TFs live, an OPENED message
+without them is ambiguous). Notification-only; no trading-logic impact.
+
 ## Next (step 2 of workflow: code)
 
 1. New testnet Bybit API key (user to create on testnet.bybit.com, OptionsTrade perm).
