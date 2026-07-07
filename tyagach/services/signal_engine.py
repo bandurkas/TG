@@ -82,9 +82,11 @@ class TriggeredEntry:
 
 def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
     """For every zone_signals row still 'pending' for this TF, scan closed bars
-    from its valid_from forward looking for (a) invalidation, (b) a midpoint
-    touch, or (c) expiry of the lookahead window. Uses the TF-specific
-    max_lookahead and stale_after from config.TIMEFRAMES.
+    from its valid_from forward looking for (a) invalidation, (b) a retracement
+    to that cell's configured entry depth (config.cell_config's depth_frac —
+    0.5 midpoint by default, per-cell override for OB since 2026-07-08), or
+    (c) expiry of the lookahead window. Uses the TF-specific max_lookahead and
+    stale_after from config.TIMEFRAMES.
 
     A (tf, kind) pair can be removed from config.ACTIVE_CELLS after a signal
     was already stored as 'pending' (e.g. a live config re-review). Expire
@@ -120,8 +122,11 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
 
         is_long = row["direction"] == "bullish"
         zlo, zhi = row["zone_low"], row["zone_high"]
-        mid = (zlo + zhi) / 2
-        buf = config.BUFFER_FRAC * mid
+        depth_frac = config.cell_config(tf, row["kind"])["depth_frac"]
+        # 0.0 = touch the near edge, 0.5 = zone midpoint (the old hardcoded
+        # value), 1.0 = touch the far edge. See config.CELL_CONFIG.
+        entry_level = (zhi - depth_frac * (zhi - zlo)) if is_long else (zlo + depth_frac * (zhi - zlo))
+        buf = config.BUFFER_FRAC * ((zlo + zhi) / 2)
         stop_price = (zlo - buf) if is_long else (zhi + buf)
         end_idx = min(n - 1, start_idx + tf_cfg.max_lookahead)
 
@@ -135,7 +140,7 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
                 repo.set_zone_signal_status(row["zone_key"], "invalidated")
                 resolved = True
                 break
-            touched = (lows[i] <= mid) if is_long else (highs[i] >= mid)
+            touched = (lows[i] <= entry_level) if is_long else (highs[i] >= entry_level)
             if touched:
                 if (n - 1 - i) > tf_cfg.stale_after:
                     # Too old to act on with today's live quote — e.g. a cold-start
@@ -145,7 +150,7 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
                 else:
                     triggered.append(TriggeredEntry(row["zone_key"], tf, row["kind"],
                                                      row["direction"], int(df["ts_ms"].iloc[i]),
-                                                     mid, stop_price))
+                                                     entry_level, stop_price))
                 resolved = True
                 break
         if not resolved and end_idx >= start_idx + tf_cfg.max_lookahead:

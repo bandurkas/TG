@@ -22,9 +22,11 @@ def is_live() -> bool:
 DAYS_PER_YEAR = 365.0
 BUFFER_FRAC = 0.0015  # SL buffer beyond zone edge, same as options_backtest.py
 
-# Per-zone validated config: R-target, expiry (days), entry IV threshold (DVOL %).
-# Same values apply regardless of timeframe — the backtest confirmed the deployed
-# per-zone config transfers to all active TFs without re-optimisation.
+# Per-zone validated config: R-target, expiry (days), entry IV threshold (DVOL %),
+# and depth_frac (how far into the zone price must retrace before entry counts —
+# 0.0=touch the near edge, 0.5=zone midpoint, 1.0=touch the far edge). These are
+# the KIND-level defaults, shared across TFs unless CELL_CONFIG below overrides
+# a specific (tf, kind) — see cell_config().
 # IV thresholds lowered 2026-07-03 based on extended sweep (sweep_iv_lower_multitf.csv),
 # re-confirmed 2026-07-03 (review pass) against all three splits (train/validation/
 # holdout), not holdout alone — see ARCHITECTURE.md "Amendment 2026-07-03":
@@ -33,10 +35,50 @@ BUFFER_FRAC = 0.0015  # SL buffer beyond zone edge, same as options_backtest.py
 #     below); the entry is kept so a future re-activation reuses validated values.
 # Which cells actually trade is governed solely by ACTIVE_CELLS.
 ZONE_CONFIG = {
-    "OB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0},
-    "MB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0},
-    "BB": {"r_target": 2.5, "expiry_days": 5.0, "iv_threshold": 55.0},
+    "OB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0, "depth_frac": 0.5},
+    "MB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0, "depth_frac": 0.5},
+    "BB": {"r_target": 2.5, "expiry_days": 5.0, "iv_threshold": 55.0, "depth_frac": 0.5},
 }
+
+# Per-cell overrides — takes priority over ZONE_CONFIG[kind] when a (tf, kind)
+# key is present here; falls through to the kind-level default otherwise.
+# See ARCHITECTURE.md "Amendment 2026-07-08" for the full derivation.
+#
+# OB populated 2026-07-08 from a ~3500-combo sweep (17 depths x 8 r_targets x
+# 6 expiries per TF, honest 60/20/20 train/validation/holdout,
+# ~/Desktop/smc_options/src/ob_depth_sweep.py, memory finding_tyagach_ob_depth_sweep):
+# depth_frac was never previously tuned at all (hardcoded 0.5 everywhere, only
+# ever validated as one of 4 categorical entry styles vs touch/close_back/engulf,
+# never swept as a continuous fraction). Each of these 4 cells DOMINATES the old
+# 0.50/3.0/0.5 baseline on train AND validation AND holdout simultaneously (not
+# cherry-picked off one split), reconfirmed at the portfolio level (compounding,
+# real per-TF concurrency caps, real fees): holdout return +31.3%->+81.8%,
+# maxDD LOWER on every split, trade frequency essentially unchanged.
+#
+# ROLLBACK: delete/empty this dict (or remove the ("15m","OB") etc. keys you
+# want to revert) — cell_config() falls back to ZONE_CONFIG["OB"]'s untouched
+# 0.50/3.0/0.5/50.0 automatically, no other code change needed.
+#
+# NOT yet re-validated on live paper data beyond a tiny (~8-trade) since-launch
+# replay — that sample is far below MIN_N=30 and showed a small (noise-level)
+# underperformance, not a contradiction of the large-sample backtest. Revisit
+# once 20-30+ live OB closes/cell accumulate under these values.
+CELL_CONFIG: dict[tuple[str, str], dict] = {
+    ("15m", "OB"): {"depth_frac": 0.575, "r_target": 10.0, "expiry_days": 0.25},
+    ("30m", "OB"): {"depth_frac": 0.500, "r_target": 7.0,  "expiry_days": 0.25},
+    ("1h",  "OB"): {"depth_frac": 0.325, "r_target": 8.0,  "expiry_days": 0.75},
+    ("2h",  "OB"): {"depth_frac": 0.675, "r_target": 3.0,  "expiry_days": 1.00},
+}
+
+
+def cell_config(tf: str, kind: str) -> dict:
+    """Effective params for one (tf, kind) cell: any CELL_CONFIG override
+    merged over the ZONE_CONFIG[kind] default (so a partial override, e.g.
+    just depth_frac, doesn't drop the kind's r_target/iv_threshold/expiry).
+    MB/BB have no CELL_CONFIG entries yet -> fall through unchanged."""
+    merged = dict(ZONE_CONFIG[kind])
+    merged.update(CELL_CONFIG.get((tf, kind), {}))
+    return merged
 
 # Portfolio allocation — manually chosen (NOT the raw grid-search optimum),
 # see TYAGACH_HANDOFF.md "Portfolio allocation" section.

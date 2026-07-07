@@ -336,6 +336,76 @@ Also in this change: `notify_open` Telegram message now includes the
 entry's TF/kind, TP and SL prices (with 4 TFs live, an OPENED message
 without them is ambiguous). Notification-only; no trading-logic impact.
 
+## Amendment (2026-07-08): per-cell OB config (depth_frac, r_target, expiry_days)
+
+Since launch, every zone kind used ONE shared `ZONE_CONFIG[kind]` dict applied
+identically to all 4 TFs — including the entry trigger itself: `_find_midpoint_entry`
+/ `scan_pending_zones` hardcoded the zone entry level at exactly 50% depth
+(`mid = (zlo+zhi)/2`). That 50% had only ever been validated as one of four
+CATEGORICAL entry styles (touch/midpoint/close_back/engulf,
+`smc_zones/src/backtest.py`) — never swept as a continuous fraction against
+neighboring values, and never allowed to differ by TF.
+
+**Sweep** (`src/ob_depth_sweep.py`, memory `finding_tyagach_ob_depth_sweep`):
+generalized the entry function with a `depth_frac` parameter (0.0=touch near
+edge, 0.5=old midpoint, 1.0=touch far edge), OB only, per TF. ~3500 backtests
+total: initial 168-combo grid → expanded to 3264 (17 depths × 8 r_targets × 6
+expiries) → caught r_target=5.0 sitting at that grid's boundary for several
+TFs, ran a targeted follow-up (r_target 3–15) which reversed the 2h pick
+(holdout there peaks at r_target=3.0 and monotonically declines past it — the
+first-pass "winner" was a boundary artifact). IV_THRESHOLD held fixed at the
+live value throughout (not re-swept, per
+`feedback_check_backtest_population_before_deploy`).
+
+**Elimination rule**: only candidates beating the live baseline on train AND
+validation AND holdout SIMULTANEOUSLY survive (not ranked on holdout alone —
+`feedback_backtest_methodology_pitfalls` pitfall #4).
+
+| TF  | live (depth/rt/exp)  | new (depth/rt/exp)    | holdout avg $/trade |
+|-----|-----------------------|------------------------|----------------------|
+| 15m | 0.50 / 3.0 / 0.5      | 0.575 / 10.0 / 0.25    | 1.85 → 2.80          |
+| 30m | 0.50 / 3.0 / 0.5      | 0.500 / 7.0 / 0.25     | 2.92 → 4.45          |
+| 1h  | 0.50 / 3.0 / 0.5      | 0.325 / 8.0 / 0.75     | 0.34 → 0.98 (noisiest, smallest n~130-135/split) |
+| 2h  | 0.50 / 3.0 / 0.5      | 0.675 / 3.0 / 1.00     | 7.34 → ~10+          |
+
+**Portfolio-level reconfirmation** (`src/ob_portfolio_compare.py`: real per-TF
+concurrency caps, compounding, real fees, OB only): holdout return
++31.3%→+81.8%, validation +17.2%→+37.2%, train +107%→+379%, maxDD LOWER on
+every split, trade frequency essentially unchanged (~3.6-4.2/day either way).
+
+**Honesty check — since-launch replay** (`src/ob_since_launch_replay.py`):
+replayed the REAL 2026-06-25→now window (real BB/MB trades kept exactly as
+they happened, only OB re-simulated, honoring the REAL historical
+`ACTIVE_CELLS`/IV-threshold timeline reconstructed from `git log`, not assuming
+OB was always live on all 4 TFs). Result: new params ~$5 WORSE than old over
+this window — but only ~8 real OB opportunities existed in that time, an order
+of magnitude below `MIN_N=30`. Pure noise, not a contradiction of the
+large-sample finding; flagged, not acted on.
+
+**Implementation** (`services/config.py`): new `CELL_CONFIG: dict[(tf,kind),
+dict]` overrides `ZONE_CONFIG[kind]` per cell via `cell_config(tf, kind)`,
+which every consumer now calls instead of indexing `ZONE_CONFIG` directly —
+`signal_engine.scan_pending_zones` (entry depth), `portfolio_state.filter_by_iv`
+(IV threshold), `loop._execute_open` (r_target/expiry_days). MB/BB have no
+`CELL_CONFIG` entries yet → fall through to the old shared values, unchanged
+(this rollout touches OB only, per user's "one at a time" plan — MB next).
+6 new tests (`tests/test_cell_config.py`) + 1 pre-existing test fixed (it
+hardcoded the old 50%-midpoint entry price as a magic number; now derives the
+expected level from `cell_config()` so it doesn't silently re-break on the
+next per-cell change).
+
+**Rollback**: empty (or remove specific keys from) `CELL_CONFIG` in
+`services/config.py` — `cell_config()` automatically falls back to
+`ZONE_CONFIG["OB"]`'s untouched 0.50/3.0/0.5/50.0. No other file needs
+touching to revert.
+
+**Not yet done** (explicitly deferred, per user request): making these
+per-cell values editable at runtime via an admin-panel API instead of a code
+constant. For now they are static, statistically-derived values; the dynamic
+version is future work once the static rollout has live track record.
+
+Revisit once 20-30+ live OB closes/cell accumulate under these values.
+
 ## Next (step 2 of workflow: code)
 
 1. New testnet Bybit API key (user to create on testnet.bybit.com, OptionsTrade perm).

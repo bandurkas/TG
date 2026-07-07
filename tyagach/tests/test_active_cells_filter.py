@@ -56,11 +56,15 @@ def test_active_cell_pending_signal_still_evaluated():
     try:
         config.ACTIVE_CELLS = frozenset({("15m", "OB")})
         ts0 = 1_750_000_000_000
-        # zone_low/high straddle the single bar's price (1505) so it touches
-        # the midpoint (1505.0) immediately — should trigger, not expire.
+        zlo, zhi = 1500.0, 1510.0
+        # Price touches this cell's configured entry depth (not necessarily the
+        # 50% midpoint -- 15m/OB has its own CELL_CONFIG override since
+        # 2026-07-08) immediately -- should trigger, not expire.
+        depth_frac = config.cell_config("15m", "OB")["depth_frac"]
+        entry_level = zhi - depth_frac * (zhi - zlo)  # bullish zone formula
         repo.upsert_zone_signal("15m:OB:bullish:1:1500.000000:1510.000000",
-                                 "15m", "OB", "bullish", 1, ts0, 1500.0, 1510.0)
-        triggered = signal_engine.scan_pending_zones(_df_one_bar(ts0, price=1505.0), "15m")
+                                 "15m", "OB", "bullish", 1, ts0, zlo, zhi)
+        triggered = signal_engine.scan_pending_zones(_df_one_bar(ts0, price=entry_level), "15m")
         assert len(triggered) == 1
         assert triggered[0].kind == "OB"
     finally:

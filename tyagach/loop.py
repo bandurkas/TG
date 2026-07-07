@@ -119,7 +119,7 @@ def _sweep_realtime_exits(now_ms: int) -> None:
 
 def _execute_open(d: portfolio_state.EntryDecision) -> None:
     e = d.entry
-    cfg = config.ZONE_CONFIG[e.kind]
+    cfg = config.cell_config(e.timeframe, e.kind)
     client = execution.get_client()
 
     instrument = client.find_instrument(d.option_side, d.strike, cfg["expiry_days"])

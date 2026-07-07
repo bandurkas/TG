@@ -37,7 +37,7 @@ def filter_by_iv(entries: list[TriggeredEntry], current_dvol: float | None) -> l
         return []
     out = []
     for e in entries:
-        threshold = config.ZONE_CONFIG[e.kind]["iv_threshold"]
+        threshold = config.cell_config(e.timeframe, e.kind)["iv_threshold"]
         if current_dvol > threshold:
             out.append(e)
     return out
