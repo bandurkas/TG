@@ -25,8 +25,35 @@ import time
 
 from db import repo
 from services import config, execution, market_data, portfolio_state, signal_engine, telegram_notify
+from services.mark_pricing import cached_quote, enrich_positions_with_mark
 
 STARTING_BALANCE = float(os.environ.get("TYAGACH_STARTING_BALANCE", "2000"))
+
+# Periodic equity snapshot cadence. Before 2026-07-09 equity_snapshots was only
+# written on trade close (set_balance) — 21 points in 2 weeks, so the dashboard
+# curve flatlined for days between closes and never showed unrealized PnL.
+EQUITY_SNAPSHOT_EVERY_MS = 10 * 60 * 1000
+
+
+def _snapshot_equity(now_ms: int) -> None:
+    """Write a periodic equity point = realized balance + unrealized PnL of
+    open positions (marked like the API does). Quote failures degrade to the
+    realized balance rather than skipping the point — a slightly stale curve
+    beats a frozen one."""
+    if now_ms - repo.last_equity_snapshot_ts_ms() < EQUITY_SNAPSHOT_EVERY_MS:
+        return
+    state = repo.get_state()
+    balance = state.get("balance_usdt") or 0.0
+    unrealized = 0.0
+    open_rows = repo.get_open_positions()
+    if open_rows:
+        try:
+            client = execution.get_client()
+            enrich_positions_with_mark(open_rows, lambda sym: cached_quote(client.get_quote, sym))
+            unrealized = sum(r.get("unrealized_pnl_usd") or 0.0 for r in open_rows)
+        except Exception as e:  # noqa: BLE001
+            print(f"[loop] equity snapshot: mark enrichment failed, using realized only: {e!r}", flush=True)
+    repo.insert_equity_snapshot(balance + unrealized, now_ms)
 
 
 def _process_tf(tf: str, now_ms: int) -> None:
@@ -232,6 +259,7 @@ def main() -> None:
             now_ms = int(time.time() * 1000)
             _sweep_real_expiry(now_ms)
             _sweep_realtime_exits(now_ms)
+            _snapshot_equity(now_ms)
             for tf in config.ACTIVE_TFS:
                 try:
                     _process_tf(tf, now_ms)

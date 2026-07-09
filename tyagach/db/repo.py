@@ -117,6 +117,26 @@ def set_balance(balance_usdt: float) -> None:
     conn.close()
 
 
+def insert_equity_snapshot(equity_usdt: float, ts_ms: int | None = None) -> None:
+    """Standalone equity point (balance + unrealized) — the loop writes one
+    every ~10 min so the dashboard curve moves BETWEEN closes too; set_balance
+    keeps writing its realized-balance point on every close as before."""
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO equity_snapshots (ts_ms, balance_usdt) VALUES (?, ?)",
+        (int(ts_ms if ts_ms is not None else time.time() * 1000), equity_usdt),
+    )
+    conn.commit()
+    conn.close()
+
+
+def last_equity_snapshot_ts_ms() -> int:
+    conn = _connect()
+    row = conn.execute("SELECT MAX(ts_ms) AS m FROM equity_snapshots").fetchone()
+    conn.close()
+    return int(row["m"] or 0)
+
+
 def set_paused(paused: bool) -> None:
     conn = _connect()
     conn.execute(

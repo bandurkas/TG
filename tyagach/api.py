@@ -41,8 +41,21 @@ def get_state():
     start_balance = state.get("start_balance_usdt") or 0.0
     history = repo.get_equity_history(limit=5000)
     tf_cursors = {tf: repo.get_last_processed(tf) for tf in config.ACTIVE_TFS}
+    # Live equity = realized balance + unrealized PnL of open positions —
+    # before 2026-07-09 the dashboard's Equity stat only moved on trade close.
+    balance = state.get("balance_usdt") or 0.0
+    unrealized = 0.0
+    if open_positions:
+        try:
+            client = execution.get_client()
+            enrich_positions_with_mark(open_positions, lambda sym: cached_quote(client.get_quote, sym))
+            unrealized = sum(r.get("unrealized_pnl_usd") or 0.0 for r in open_positions)
+        except execution.ExecutionError as e:
+            print(f"[api] state mark enrichment skipped, no execution client: {e}", flush=True)
     return {
         "balance_usdt": state.get("balance_usdt"),
+        "equity_usd": balance + unrealized,
+        "unrealized_usd": unrealized,
         "start_balance_usdt": start_balance,
         "started_at_ms": state.get("started_at_ms"),
         "paused": bool(state.get("paused")),
