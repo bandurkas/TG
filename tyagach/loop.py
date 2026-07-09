@@ -21,11 +21,15 @@ fee model (0.03% of underlying notional, cap 12.5% of premium)."""
 from __future__ import annotations
 
 import os
+import sys
 import time
 
 from db import repo
 from services import config, execution, market_data, portfolio_state, signal_engine, telegram_notify
 from services.mark_pricing import cached_quote, enrich_positions_with_mark
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "core"))
+import bs_pricer  # noqa: E402  (fill sanity floor in _execute_open)
 
 STARTING_BALANCE = float(os.environ.get("TYAGACH_STARTING_BALANCE", "2000"))
 
@@ -160,6 +164,19 @@ def _execute_open(d: portfolio_state.EntryDecision) -> None:
     if quote is None or quote["bid"] <= 0:
         print(f"[loop] no usable quote for {symbol} — skip {e.zone_key}", flush=True)
         return
+
+    # Fill sanity floor (config.FILL_FLOOR_FRAC): a bid far below the BS-mid
+    # estimate is a glitched/thin chain snapshot (live audit: median fill 85%
+    # of mid, glitches at 15-54%). Skip WITHOUT consuming the signal — it stays
+    # pending and retries next tick while fresh, same as the no-quote path.
+    if config.FILL_FLOOR_FRAC > 0:
+        strike_ = float(symbol.split("-")[2])
+        T_years = max((int(instrument["deliveryTime"]) - e.entry_ts_ms) / 86_400_000, 0.01) / 365.0
+        bs_mid = bs_pricer.price(d.option_side, e.entry_price, strike_, T_years, d.iv_entry / 100.0)
+        if bs_mid > 0 and quote["bid"] < config.FILL_FLOOR_FRAC * bs_mid:
+            print(f"[loop] fill floor: {symbol} bid={quote['bid']:.2f} < "
+                  f"{config.FILL_FLOOR_FRAC:.0%} of BS-mid {bs_mid:.2f} — skip {e.zone_key}", flush=True)
+            return
 
     qty = client.round_qty(instrument, d.num_units)
     if qty <= 0:

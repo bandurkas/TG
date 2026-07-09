@@ -73,7 +73,7 @@ def test_scan_pending_zones_uses_cell_depth_frac_not_hardcoded_midpoint():
     try:
         config.ACTIVE_CELLS = frozenset({("15m", "OB")})
         config.CELL_CONFIG = {("15m", "OB"): {"depth_frac": 0.8}}
-        ts0 = 1_750_000_000_000
+        ts0 = 1_750_018_000_000  # 20:26 UTC — outside ENTRY_VETO_UTC_HOURS (12-15h veto, 2026-07-09)
         repo.upsert_zone_signal("15m:OB:bullish:1:1500.000000:1510.000000",
                                  "15m", "OB", "bullish", 1, ts0, 1500.0, 1510.0)
         # bar touches down to 1502 (the depth=0.8 level) but NOT down to 1505
@@ -95,7 +95,7 @@ def test_scan_pending_zones_default_depth_frac_matches_old_midpoint_behavior():
     try:
         config.ACTIVE_CELLS = frozenset({("30m", "OB")})
         config.CELL_CONFIG = {k: v for k, v in orig_cell_cfg.items() if k[0] != "30m"}
-        ts0 = 1_750_000_000_000
+        ts0 = 1_750_018_000_000  # 20:26 UTC — outside ENTRY_VETO_UTC_HOURS (12-15h veto, 2026-07-09)
         repo.upsert_zone_signal("30m:OB:bullish:1:1500.000000:1510.000000",
                                  "30m", "OB", "bullish", 1, ts0, 1500.0, 1510.0)
         df = _df_one_bar(ts0, low=1505.0, high=1510.0)  # touches exactly the midpoint

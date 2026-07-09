@@ -417,3 +417,28 @@ Revisit once 20-30+ live OB closes/cell accumulate under these values.
 
 Per [[feedback_options_workflow_order]]: code review mandatory before test,
 review again before any deploy — including the paper/testnet deploy itself.
+
+## Amendment (2026-07-09): entry-hour veto, fill floor, fill-calibration rule
+
+Backed by `TYAGACH_STRATEGY_REVIEW_2026-07-09.md` (live fill audit + 5004-trade
+hour-of-entry backtest of the deployed OB cells):
+
+1. **Entry-hour veto** — `config.ENTRY_VETO_UTC_HOURS` (default 12–15h UTC,
+   env `TYAGACH_ENTRY_VETO_UTC_HOURS`, empty disables). A fresh zone touch in
+   the window is CONSUMED (`expired`), not deferred — matches the backtested
+   population (those entries never happen). Basis: worst hour-bucket on all 3
+   splits independently (+$0.01/trade, 22% of entries), live agrees (−$15.6,
+   n=8); portfolio per_tf: halves train/val maxDD, +8pp val return, −5pp
+   holdout return, −22% frequency. Accepted as a risk reducer.
+2. **Fill sanity floor** — `config.FILL_FLOOR_FRAC` (default 0.70 of BS-mid at
+   iv_entry, env `TYAGACH_FILL_FLOOR_FRAC`, 0 disables), checked in
+   `loop._execute_open` before `sell_to_open`. Skips glitched/thin quotes
+   (id6-style, 15% of mid) WITHOUT consuming the signal (retries while fresh,
+   same semantics as the no-quote skip). Normal OB flow (81–116% of mid) is
+   untouched.
+3. **Fill-calibration rule (analysis discipline, not code):** live premiums
+   fill at ~85% of BS-mid (median, n=22). ANY comparison of live cell results
+   against backtest expectations must first haircut the backtest by ~15% of
+   premium — otherwise healthy live cells will look broken and get killed the
+   way MB may have been judged too harshly. Recheck the haircut number as the
+   live sample grows.

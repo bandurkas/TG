@@ -153,5 +153,30 @@ SYMBOL = "ETHUSDT"
 BASE_COIN = "ETH"
 POLL_SECONDS = 60  # loop wake interval
 
+# ── Entry-hour veto (2026-07-09, TYAGACH_STRATEGY_REVIEW_2026-07-09.md §3b) ──
+# 12-15h UTC entries are the worst hour-bucket on ALL 3 splits independently
+# (+$0.01/trade over 1115 of 5004 backtest trades at the deployed CELL_CONFIG;
+# 20-23h = +$2.18) and the live sample agrees (−$15.6 over n=8). Mechanism is
+# external and 4y-stable: 13:30 UTC US macro prints + US cash open. Portfolio
+# level (per_tf engine): halves train/validation maxDD, +8pp validation return,
+# costs ~5pp holdout return and ~22% trade frequency — accepted as a risk
+# reducer. A vetoed touch is CONSUMED (status 'expired'), not deferred — that
+# matches how the veto was backtested (the entry never happens).
+# Env override: comma-separated UTC hours; empty string disables the veto.
+_veto_raw = os.getenv("TYAGACH_ENTRY_VETO_UTC_HOURS", "12,13,14,15")
+ENTRY_VETO_UTC_HOURS: frozenset[int] = frozenset(
+    int(h) for h in _veto_raw.split(",") if h.strip()
+)
+
+# ── Fill sanity floor (2026-07-09, review §3a) ──
+# Live fill audit: median sold premium = 85% of BS-mid at iv_entry, but glitched
+# chain snapshots go as low as 15% of mid (trade id6, -$1.10 on a premium 7x
+# below comparable quotes). Skip the open when the best bid is below this
+# fraction of the BS-mid estimate; the signal stays pending and is retried
+# next tick while fresh (same semantics as the existing no-quote skip), so a
+# transient glitch just delays the fill. Current OB flow fills at 81-116% of
+# mid — untouched. 0 disables.
+FILL_FLOOR_FRAC = float(os.getenv("TYAGACH_FILL_FLOOR_FRAC", "0.70"))
+
 # Legacy scalar kept for any remaining callers; canonical source is TIMEFRAMES["15m"]
 BARS_PER_DAY = 96

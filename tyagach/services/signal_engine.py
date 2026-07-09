@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 import os
+import time as _time
 from dataclasses import dataclass
 
 import pandas as pd
@@ -142,14 +143,20 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
                 break
             touched = (lows[i] <= entry_level) if is_long else (highs[i] >= entry_level)
             if touched:
+                touch_ts_ms = int(df["ts_ms"].iloc[i])
                 if (n - 1 - i) > tf_cfg.stale_after:
                     # Too old to act on with today's live quote — e.g. a cold-start
                     # backlog. Expire rather than trade a historical touch against the
                     # wrong price context.
                     repo.set_zone_signal_status(row["zone_key"], "expired")
+                elif _time.gmtime(touch_ts_ms / 1000).tm_hour in config.ENTRY_VETO_UTC_HOURS:
+                    # Entry-hour veto (config.ENTRY_VETO_UTC_HOURS): consume the
+                    # touch without trading — deferring it instead would turn the
+                    # veto into an untested "delay to 16:00" variant.
+                    repo.set_zone_signal_status(row["zone_key"], "expired")
                 else:
                     triggered.append(TriggeredEntry(row["zone_key"], tf, row["kind"],
-                                                     row["direction"], int(df["ts_ms"].iloc[i]),
+                                                     row["direction"], touch_ts_ms,
                                                      entry_level, stop_price))
                 resolved = True
                 break

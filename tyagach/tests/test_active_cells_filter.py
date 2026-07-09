@@ -39,7 +39,7 @@ def test_inactive_cell_pending_signal_is_expired_not_triggered():
     orig_cells = config.ACTIVE_CELLS
     try:
         config.ACTIVE_CELLS = frozenset({("15m", "MB")})  # OB not active
-        ts0 = 1_750_000_000_000
+        ts0 = 1_750_018_000_000  # 20:26 UTC — outside ENTRY_VETO_UTC_HOURS (12-15h veto, 2026-07-09)
         repo.upsert_zone_signal("15m:OB:bullish:1:1500.000000:1510.000000",
                                  "15m", "OB", "bullish", 1, ts0, 1500.0, 1510.0)
         triggered = signal_engine.scan_pending_zones(_df_one_bar(ts0), "15m")
@@ -55,7 +55,7 @@ def test_active_cell_pending_signal_still_evaluated():
     orig_cells = config.ACTIVE_CELLS
     try:
         config.ACTIVE_CELLS = frozenset({("15m", "OB")})
-        ts0 = 1_750_000_000_000
+        ts0 = 1_750_018_000_000  # 20:26 UTC — outside ENTRY_VETO_UTC_HOURS (12-15h veto, 2026-07-09)
         zlo, zhi = 1500.0, 1510.0
         # Price touches this cell's configured entry depth (not necessarily the
         # 50% midpoint -- 15m/OB has its own CELL_CONFIG override since
