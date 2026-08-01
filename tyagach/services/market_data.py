@@ -41,7 +41,11 @@ _dvol_last_ts: float = 0.0
 
 def _fetch_klines_paged(interval: str, limit: int, end_ms: int | None = None) -> list[dict]:
     """Paginated Bybit kline fetch.  Returns up to `limit` bars, oldest→newest,
-    with the still-forming current bar stripped (Bybit includes it as list[0])."""
+    INCLUDING the still-forming current bar if the caller didn't page far enough
+    back to exclude it (Bybit includes it as list[0] on an unbounded/latest
+    query) — callers that must not persist a forming bar's OHLC need to run
+    the result through `_closed_bars` themselves; this function only paginates
+    and dedups, it does not know "now"."""
     out: list[dict] = []
     end = end_ms
     remaining = limit
@@ -76,15 +80,32 @@ def _fetch_klines_paged(interval: str, limit: int, end_ms: int | None = None) ->
 
 
 def _merge_into_cache(tf: str, new_bars: list[dict]) -> None:
-    existing = _kline_cache.get(tf, [])
-    existing_ts = {c["ts_ms"] for c in existing}
+    """Union-merge `new_bars` into the persistent per-TF cache, keyed by
+    ts_ms. Last-write-wins on a ts_ms collision (a later fetch's OHLC for a
+    given bar always supersedes an earlier one) — NOT skip-if-present. This
+    matters because a bar can legitimately be re-fetched: `get_klines`'s
+    incremental path (unlike its cold-start path) does not filter out the
+    still-forming bar before calling this, by design (see get_klines) it MAY
+    pass a not-yet-closed bar through. If merge ever skipped already-seen
+    ts_ms, that forming bar's partial OHLC (captured seconds into its life,
+    understating true high/low) would be locked in forever once real time
+    caught up and `_closed_bars` started returning it — every later fetch's
+    correct, final OHLC for that same ts_ms would be silently dropped since
+    the key already existed. Overwrite makes the cache self-healing instead:
+    whatever we fetch last for a given ts_ms is authoritative.
+    Regression: see tests/test_market_data.py (2026-08-02 finding — this
+    exact bug meant nearly every live bar past the first cold-start window
+    was permanently frozen at its ~0-60s-old forming snapshot, corrupting
+    the high/low range that swing/OB/FVG detection depends on; zone
+    formation on live data collapsed from ~5-19/day to ~0-2/day within days
+    of the last container restart while the same detector on a fresh
+    re-fetch of the identical real price history found the normal rate)."""
+    merged_by_ts = {c["ts_ms"]: c for c in _kline_cache.get(tf, [])}
     for b in new_bars:
-        if b["ts_ms"] not in existing_ts:
-            existing.append(b)
-            existing_ts.add(b["ts_ms"])
-    existing.sort(key=lambda c: c["ts_ms"])
+        merged_by_ts[b["ts_ms"]] = b
+    merged = sorted(merged_by_ts.values(), key=lambda c: c["ts_ms"])
     tf_cfg = config.TIMEFRAMES[tf]
-    _kline_cache[tf] = existing[-tf_cfg.rolling_window:]
+    _kline_cache[tf] = merged[-tf_cfg.rolling_window:]
 
 
 def _closed_bars(tf: str, bars: list[dict]) -> list[dict]:
@@ -99,7 +120,14 @@ def get_klines(tf: str = "15m") -> list[dict]:
 
     First call per TF does a full paginated backfill.  Subsequent calls fetch
     only ~50 recent bars and merge, then return the trimmed cache.  The caller
-    still sees a complete window every time."""
+    still sees a complete window every time.
+
+    Both the cold-start and incremental paths filter through `_closed_bars`
+    BEFORE the result is written into `_kline_cache` (not just on read) —
+    the persistent cache must never contain a bar that was still forming at
+    fetch time, since `_merge_into_cache` treats whatever it's given as a
+    keeper. See `_merge_into_cache`'s docstring for what went wrong when the
+    incremental path skipped this filter (2026-08-02)."""
     tf_cfg = config.TIMEFRAMES[tf]
 
     if tf not in _kline_cache:
@@ -114,9 +142,13 @@ def get_klines(tf: str = "15m") -> list[dict]:
         # No new bar possible yet — return cached data without a network call
         return _closed_bars(tf, _kline_cache[tf])
 
-    # Incremental update: fetch only the last 50 bars
+    # Incremental update: fetch only the last 50 bars, but only PERSIST the
+    # ones that are genuinely closed — the freshest entry Bybit returns here
+    # is almost always the still-forming current bar, and merging it as-is
+    # would freeze its ~0-60s-old partial OHLC into the cache forever (see
+    # _merge_into_cache docstring).
     fresh = _fetch_klines_paged(tf_cfg.interval, 50)
-    _merge_into_cache(tf, fresh)
+    _merge_into_cache(tf, _closed_bars(tf, fresh))
 
     closed = _closed_bars(tf, _kline_cache[tf])
 
