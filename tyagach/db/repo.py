@@ -281,6 +281,44 @@ def close_position(position_id: int, *, exit_ts_ms: int, exit_spot: float, exit_
     conn.close()
 
 
+def close_position_and_set_balance(position_id: int, *, exit_ts_ms: int, exit_spot: float,
+                                     exit_reason: str, close_order_id: str | None,
+                                     pnl_net: float) -> float:
+    """Atomically close a position and apply its pnl_net to balance_usdt (plus
+    an equity snapshot) in ONE transaction. loop.py used to do this as three
+    separate connections (close_position, then a get_state read, then
+    set_balance) -- a crash between the first and the rest would leave a
+    position permanently marked closed with a recorded pnl_net that never
+    actually landed in balance_usdt, silently losing that PnL from the
+    account with no way to detect or replay it later. Returns the new
+    balance. Raises and rolls back (nothing persisted) on any failure."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE positions SET status = 'closed', exit_ts_ms = ?, exit_spot = ?, exit_reason = ?, "
+            "close_order_id = ?, pnl_net = ? WHERE id = ?",
+            (exit_ts_ms, exit_spot, exit_reason, close_order_id, pnl_net, position_id),
+        )
+        row = conn.execute("SELECT balance_usdt FROM bot_state WHERE id = 1").fetchone()
+        new_balance = (row["balance_usdt"] if row else 0.0) + pnl_net
+        now_ms = int(time.time() * 1000)
+        conn.execute(
+            "UPDATE bot_state SET balance_usdt = ?, updated_at_ms = ? WHERE id = 1",
+            (new_balance, now_ms),
+        )
+        conn.execute(
+            "INSERT INTO equity_snapshots (ts_ms, balance_usdt) VALUES (?, ?)",
+            (now_ms, new_balance),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return new_balance
+
+
 def get_positions(status: str | None = None, limit: int = 200) -> list[dict]:
     conn = _connect()
     if status:

@@ -177,6 +177,3 @@ ENTRY_VETO_UTC_HOURS: frozenset[int] = frozenset(
 # transient glitch just delays the fill. Current OB flow fills at 81-116% of
 # mid — untouched. 0 disables.
 FILL_FLOOR_FRAC = float(os.getenv("TYAGACH_FILL_FLOOR_FRAC", "0.70"))
-
-# Legacy scalar kept for any remaining callers; canonical source is TIMEFRAMES["15m"]
-BARS_PER_DAY = 96

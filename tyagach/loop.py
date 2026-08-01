@@ -254,10 +254,9 @@ def _execute_close(ex: portfolio_state.ExitDecision) -> None:
     gross_pnl = p["sell_premium_received"] - buy_premium_paid
     net_pnl = gross_pnl - p["open_fee"] - close_fee
 
-    repo.close_position(p["id"], exit_ts_ms=int(time.time() * 1000), exit_spot=exit_spot,
-                         exit_reason=ex.exit_reason, close_order_id=result.order_id, pnl_net=net_pnl)
-    new_balance = repo.get_state()["balance_usdt"] + net_pnl
-    repo.set_balance(new_balance)
+    new_balance = repo.close_position_and_set_balance(
+        p["id"], exit_ts_ms=int(time.time() * 1000), exit_spot=exit_spot,
+        exit_reason=ex.exit_reason, close_order_id=result.order_id, pnl_net=net_pnl)
     print(f"[loop] CLOSED {p.get('timeframe','?')}/{p['symbol']} reason={ex.exit_reason} "
           f"net_pnl={net_pnl:.2f} balance={new_balance:.2f}", flush=True)
     telegram_notify.notify_close(
