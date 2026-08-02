@@ -315,3 +315,29 @@ own).
   this session, and this one additionally assumes the config was frozen for
   4 years, which it wasn't (most of these cells didn't exist as validated
   configs until today).
+
+## "Since launch" what-if — bot's actual runtime window only (2026-08-02, follow-up to the since-inception replay above)
+
+Same replay, but restricted to the bot's ACTUAL live span (started_at_ms
+1782424743912 = 2026-06-25 21:59 UTC -> now, 37.6 days) instead of the full
+4y history -- directly comparable to the real realized result.
+`src/simulate_since_launch.py`.
+
+- Only **46 raw signals** across all 8 cells in this window (vs ~32k over
+  the full 4y history) -- this specific 38-day window is a genuinely small,
+  noisy sample; don't over-read the exact numbers below.
+- **Replay result: 36 closed, 58.3% WR, $2,000 -> $1,985.30 (-0.7%), maxDD
+  2.3%.** Identical at every capacity cap tested (uncapped through $2,000)
+  -- balance never compounds enough over 38 days for the cap to bind.
+- **vs. actual live realized: $1,965.78 (-1.7%), 27 closed, 40.7% WR.**
+  The replay is modestly better (higher WR, smaller loss) but nowhere near
+  the dramatic edge the full 4y history shows -- makes sense, 38 days is
+  ~2.6% of the full span, and most of these cells (30m/OB, 1h/OB, 30m/FVG,
+  1h/FVG, 15m/FVG) only went live TODAY, so the live number reflects almost
+  entirely 2h/OB (+ the kline-cache-bug-suppressed weeks) rather than the
+  full 8-cell config.
+- **Read this as**: the current config's edge is real over the long run
+  (since-inception replay above) but not something a ~38-day / ~46-signal
+  sample can meaningfully confirm or deny either way -- consistent with
+  this project's own 20-30-closes-per-cell convention for trusting live
+  data, which none of the 5 newly-added cells have accumulated yet.
