@@ -57,7 +57,7 @@ plain-touch one).
   `config.ACTIVE_CELLS`/`cell_config("2h","FVG")` inside the running
   container, balance/positions untouched, no errors in loop logs.
 
-## U3 — Solo per-TF validation for 1h/30m/15m × {OB, FVG} (before adding anything else)
+## U3 — Solo per-TF validation for 1h/30m/15m × {OB, FVG} — **DONE**
 
 The full grid re-sweep with rejection-close entries found robust per-trade
 combos for **every** (kind, tf) pair — a huge change from before (only
@@ -75,6 +75,45 @@ flips positive, see RESEARCH_FINDINGS).
   based on today's runtimes) — this is mechanical, not open research.
 - **Output**: a ranked list of which individual cells are actually
   deployable on their own merits (their own U1/U2-equivalent).
+
+**Result** (`src/u3_solo_validation.py`, each cell run SOLO — no capacity/
+combination story yet, that's U4/U5):
+
+| pair | neg quarters | mean %/q | worst %/q | worst maxDD | config (depth/r_target/expiry_d) |
+|---|---|---|---|---|---|
+| 30m/FVG | 0/8 | +53.5% | +16.2% | 6.8% | 0.300/7.0/0.125 |
+| 1h/FVG  | 0/8 | +40.9% | +9.8%  | 7.1% | 0.325/7.0/0.167 |
+| 15m/FVG | 0/8 | +61.1% | +9.7%  | 11.8%| 0.300/10.0/0.125 |
+| 30m/OB  | 0/8 | +7.3%  | +0.3%  | 7.0% | 0.300/10.0/0.125 |
+| 1h/OB   | 1/8 | +3.4%  | -0.8%  | 6.1% | 0.650/5.0/0.125 |
+| 15m/OB  | 1/8 | +5.4%  | -5.8%  | 8.2% | 0.300/10.0/0.125 |
+
+- **4 cells cleanly pass** (0/8 negative quarters): 30m/FVG, 1h/FVG,
+  15m/FVG, 30m/OB. FVG is again the strongest signal source this session —
+  all 3 FVG timeframes rank above every OB timeframe.
+- **1h/OB marginal**: 1 negative quarter, but shallow (-0.8%) — low-risk if
+  added.
+- **15m/OB flagged, not auto-recommended**: 1 negative quarter AND the
+  60/20/20 validation split alone is net negative (-8.1% return, calmar
+  -0.78) even though train/holdout are positive and the quarter-level worst
+  is only -5.8% — the same per-trade-robust-but-portfolio-fragile pattern
+  that killed the OLD 15m/OB before this session's rejection-close fix (see
+  U1 notes). Rejection-close clearly helps it (per RESEARCH_FINDINGS, it
+  flips all 3 splits positive at a DIFFERENT config than the one picked
+  here purely by train avg_pnl) but this specific best-by-train candidate
+  still has a shakier validation split than the other 5. Re-pick a candidate
+  favoring validation robustness before deploying, or deploy last / skip.
+- **Compounded % returns on the `train` split are NOT deployment-relevant**
+  (e.g. 15m/FVG train +1146%) — same caveat as every other solo-compounding
+  number this session (see U5 below): realistic only once run through the
+  same shared-account capacity constraints all other live cells face. The
+  quarter-level numbers (fresh $2000 each) are the trustworthy figures here.
+- **Reminder for U4**: per-trade robust != portfolio robust != quarter
+  robust != combined-with-everything-else robust (proven 3x this session:
+  old 30m/OB, multi-TF FVG, and now this table shows even solo-portfolio-
+  robust isn't automatic — 4/6 pass cleanly, 2/6 don't). Each cell U4 adds
+  still needs its own live sample before trusting it, even after this
+  backtest pass.
 
 ## U4 — Staged live rollout of validated cells (not a single big-bang deploy)
 
