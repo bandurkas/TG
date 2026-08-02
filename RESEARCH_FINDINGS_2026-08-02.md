@@ -281,3 +281,37 @@ alone.
   sample couldn't confirm (split disagreement = noise, not signal). Don't
   transplant a fine-grained finding from a high-n zone type to a low-n one
   without re-checking.
+
+## "Since inception" what-if (2026-08-02, requested after U4 shipped) — retrospective only, not a validation
+
+User asked: how would the bot have done with today's config (all 8 U4 cells,
+$2000 start) if it had run since the start of the price history, instead of
+only live since 2026-07-02? `src/simulate_since_inception.py` -- same
+rejection-close entries/pricing/frictions as every other check this session,
+full ~4y span, no train/validation/holdout split (this is a replay, not a
+fresh validation -- don't use it to justify further config changes on its
+own).
+
+- **Raw uncapped compounding: $2,000 -> $11.8M (+590,561%), 25,618 trades,
+  17.4/day, 59.6% WR, 24.1% maxDD.** NOT credible -- same artifact already
+  flagged for the multi-TF FVG combo (RESEARCH_FINDINGS above, U5): 8 cells
+  combined average ~18 trades/day, and weight_pct*balance sizing lets
+  notional grow unbounded as balance compounds, which no real ETH options
+  market could actually fill at this frequency/size.
+- **Capacity-cap sensitivity** (budget = weight_pct * min(balance, CAP),
+  same method as `rejection_multitf_capacity.py`, extended to all 8 cells
+  including BB): even at the most conservative cap tested (CAP=$2,000 --
+  sizing never exceeds the bot's actual starting capital, ever, no matter
+  how much the tracked balance grows) the result is still **$2,000 ->
+  $19,046 (+852%), maxDD 8.8%, 59.7% WR, ~18.0 trades/day, 26,407 trades**
+  over the ~1471-day span (~$11.6/day average). Between $5k-$10k cap:
+  $44.9k-$84.6k (+2,143% to +4,128%).
+- **Read this as**: directionally the combined 8-cell config looks like a
+  real, large edge over the full history at ANY capacity assumption tested
+  (even the harshest floor stays solidly profitable with a reasonable
+  drawdown) -- but the exact magnitude is not trustworthy without real
+  Bybit ETH options depth data (still not collected, same gap noted in U5/U6).
+  Also **not** a live-fill guarantee -- same caveat as every backtest number
+  this session, and this one additionally assumes the config was frozen for
+  4 years, which it wasn't (most of these cells didn't exist as validated
+  configs until today).
