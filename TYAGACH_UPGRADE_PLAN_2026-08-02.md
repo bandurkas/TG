@@ -199,8 +199,74 @@ capacity-cap sensitivity level tested ($5k-uncapped), worst quarter always
   BTC version) — unchanged from `TYAGACH_IMPROVEMENT_PLAN.md`, orthogonal
   to this session's findings.
 
+## U7 — Follow-up round: data-staleness fix, MB reactivation, margin cap, 3 confirmed no-ops — **DONE, SHIPPED**
+
+Prompted by the user asking "how do we raise profit further" after U1-U4
+shipped. Four items checked; one shipped, one earlier bug fixed along the
+way, three confirmed already-optimal (no change).
+
+**Critical data bug found mid-round, fixed first (`72a31cf`)**: the
+checked-in `data/eth_*.csv` files stopped at 2026-06-27 and
+`data/eth_dvol_1h_4y.json` at 2026-06-25 -- 5+ weeks stale, missing most of
+the bot's real launch-to-now window AND the back half of the
+2026-06-26→07-07 MB live-loss window that the MB-reactivation decision
+(below) needed to check against. Fetched real klines via
+`src/fetch_klines_gap.py` (Bybit public API relayed through VPS3 --
+credentials read from env vars, never hardcoded, this repo is public on
+GitHub) and fresh DVOL directly from Deribit. Re-ran EVERY validation from
+today's session (U1-U4 included) against the corrected data -- all held up
+unchanged. This means every earlier "since inception"/"since launch"
+what-if number quoted in chat before this fix was computed on incomplete
+data; `src/simulate_since_launch_v2.py` supersedes `simulate_since_launch.py`.
+
+1. **MB reactivation (all 4 TFs) + 15m/OB re-add — SHIPPED (`8c7a80b`)**.
+   MB was fully deactivated 2026-07-07 on a real live-loss override ("the
+   sole bleeder, -$33.72, last 8 closes all MB"), before rejection-close
+   existed. Re-swept MB+BB with rejection-close
+   (`src/bb_mb_rejection_sweep.py`) -- all 4 MB timeframes robust
+   per-trade; validated portfolio+quarter (`src/bb_mb_solo_validation.py`)
+   against the CORRECTED data, which now genuinely includes the real loss
+   window in its holdout split -- all 4 pass cleanly (0/8 negative quarters
+   each). BB re-swept too but NOT retuned (stays fragile, 2/8 negative,
+   even after re-picking for split-balance). 15m/OB (excluded at U4 time)
+   re-picked via min-avg_pnl-across-splits -- passes cleanly. Full proposed
+   13-cell book beats the current 8-cell book on every metric
+   (`src/u_all13_combo_validation.py`). **Caution documented in
+   config.py**: this is an inference (rejection-close plausibly fixes the
+   fakeout-entry mechanism behind the real losses), not a live-proven fact
+   -- watch closely, deactivate again immediately if MB bleeds live.
+2. **MAX_TOTAL_MARGIN_PCT 0.60→0.80 — SHIPPED (`89fd649`)**. Re-tested
+   headroom against the full 13-cell book (`src/u_cap_headroom_13cell.py`):
+   `MAX_OPEN_TOTAL_GLOBAL` (8→16) has zero effect at any level (per-TF
+   same-direction rule is still the real limiter). Margin cap 0.60→0.80
+   gives a real gain (validation +425.4%→+463.4%, holdout
+   +432.5%→+447.9%, worst quarter +68.4%→+78.1%) for +0.3-0.7pp maxDD;
+   pushing to ~uncapped (0.99) stops helping and worst quarter gets WORSE
+   (78.1%→73.8%) -- 0.80 is the sweet spot, not the ceiling of what was
+   tested.
+3. **Entry-hour veto — CHECKED, NOT CHANGED**
+   (`src/u_entry_veto_recheck_13cell.py`). Hypothesis was that with 13
+   cells now firing (vs ~1 when the veto was tuned), the flat 12-15h UTC
+   block might cost more than it's worth. Disproven: WITH veto still beats
+   WITHOUT on every metric at 13-cell scale (validation +632% vs +425%,
+   holdout +519% vs +433%, lower maxDD both splits) -- it's filtering
+   genuinely worse trades, not just cutting frequency. No change.
+4. **IV threshold for FVG/MB — CHECKED, NOT CHANGED**
+   (`src/iv_threshold_resweep.py` + `iv_threshold_portfolio_check.py`).
+   Neither kind was ever independently tuned (FVG inherited OB's 50, MB's
+   50 predates rejection-close). Per-trade sweep found every cell "improves"
+   at a higher threshold -- but portfolio+quarter check exposed the same
+   frequency-vs-quality trap that's bitten this project repeatedly: holdout
+   return collapses +432.5%→+115.6% at the per-trade-winning thresholds.
+   Current 50/50 confirmed correct, not changed.
+5. **1h/OB re-pick — CHECKED, NOT CHANGED.** Same min-split technique that
+   fixed 15m/OB, applied to 1h/OB (marginal, 1/8 negative quarters). No
+   candidate found beats the current live config
+   (depth=0.65/r_target=5.0/expiry=0.125). Stays marginal, as already known.
+
 ## Suggested order
 
 U1 (ship now, lowest risk) → U2 (one test, then ship) → U3 (mechanical,
 produces the U4 rollout list) → U4 (staged, takes weeks by design) → U5
-(only after U4 gives live evidence) → U6 (opportunistic).
+(only after U4 gives live evidence) → U6 (opportunistic) → U7 (done, this
+round -- data fix + MB reactivation + margin cap + 3 confirmed no-ops).
