@@ -115,21 +115,44 @@ combination story yet, that's U4/U5):
   still needs its own live sample before trusting it, even after this
   backtest pass.
 
-## U4 — Staged live rollout of validated cells (not a single big-bang deploy)
+## U4 — Live rollout of validated cells — **DONE, SHIPPED** (`addce8a`)
 
-Once U3 produces a ranked list of solo-validated cells, add them to
-ACTIVE_CELLS **one at a time**, not all together:
+Original plan: add cells to ACTIVE_CELLS **one at a time**, letting each
+accumulate 20-30 live closes before adding the next, because the multi-TF
+FVG combination (U5 below) showed combined portfolios can behave
+differently from the sum of solo cells (correlation during trend regimes
+even at low direct zone overlap) — staging would catch that on real data
+instead of trusting an uncalibrated capacity model.
 
-- Deploy cell N, let it accumulate a meaningful live sample (this project's
-  own convention: 20-30 closes before trusting live vs backtest agreement)
-  before adding cell N+1.
-- Reason: the multi-TF FVG combination (U5 below) showed the *combined*
-  portfolio behaves differently from the sum of solo cells (correlation
-  during trend regimes even at low direct zone overlap) — staged rollout
-  catches this on real data instead of trusting an uncalibrated capacity
-  model.
-- Each addition still goes through the full architecture→code→review→
-  tests→paper-deploy cycle, same as every change this session.
+**Superseded by explicit user decision**: rather than stage one cell at a
+time over several weeks, the user asked to add every U3-validated cell at
+once ("make all to improve profit, remember our target" — the standing
+goal is making Tyagach profitable, not the most cautious possible rollout
+pace). Shipped all 5 solo-validated cells together — 30m/OB, 1h/OB,
+30m/FVG, 1h/FVG, 15m/FVG — bringing the live set to 8 cells across all 4
+TFs (was 3 cells / 2 TFs). 15m/OB stayed OUT (its own validation failure,
+not a staging call — see U3 above).
+
+- Each new cell's CELL_CONFIG value verified byte-for-byte against what
+  `src/u3_solo_validation.py` actually backtested (independent review
+  pass, no mismatches).
+- `MAX_OPEN_TOTAL_GLOBAL=8`/`MAX_TOTAL_MARGIN_PCT=0.60` still bound
+  worst-case combined exposure regardless of cell count — confirmed to
+  apply across all TFs, not per-TF (`portfolio_state.py::decide_entries`
+  reads a global open-position count with no TF filter).
+- **What's genuinely unverified**: cross-cell live correlation among these
+  5+3 cells firing together. Only SOLO backtests were run per cell (U3);
+  no combined backtest across all 8, and no live sample yet — this is the
+  real risk the original staged-rollout plan existed to manage, now being
+  taken on directly instead of walked into gradually. Watch live P&L
+  closely over the next 20-30 combined closes; if correlated drawdowns
+  appear that the solo backtests didn't predict, that's the signal U4's
+  original caution was about.
+- 86/86 tests pass. Deployed to VPS3, verified live: `ACTIVE_CELLS` (8
+  entries) and `ACTIVE_TFS` (`['15m','30m','1h','2h']`) confirmed inside
+  the running container, `tf_cursors` shows all 4 TFs ticking, a live
+  30m/FVG signal was seen firing and correctly fill-floor-skipped within
+  seconds of deploy, balance/positions untouched, no errors in logs.
 
 ## U5 — Multi-TF combination story: real but unresolved magnitude (do not deploy as one shot)
 
