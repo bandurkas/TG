@@ -143,6 +143,14 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
                 break
             touched = (lows[i] <= entry_level) if is_long else (highs[i] >= entry_level)
             if touched:
+                # Rejection-close filter (2026-08-02, RESEARCH_FINDINGS_2026-08-02.md
+                # U1): a wick through entry_level that doesn't also close back on
+                # the favorable side is a fakeout, not a real touch -- keep scanning
+                # instead of triggering on it. Validated across every (kind, tf)
+                # tested this session; biggest single improvement found.
+                rejected = (closes[i] > entry_level) if is_long else (closes[i] < entry_level)
+                if not rejected:
+                    continue
                 touch_ts_ms = int(df["ts_ms"].iloc[i])
                 if (n - 1 - i) > tf_cfg.stale_after:
                     # Too old to act on with today's live quote — e.g. a cold-start

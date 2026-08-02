@@ -49,12 +49,28 @@ def _df_one_bar(ts_ms: int, price: float):
     }])
 
 
+def _df_touch_and_reject(ts_ms: int, entry_level: float):
+    """Touches entry_level (low<=entry_level) but closes back above it -- a
+    rejection, required since the rejection-close entry filter (2026-08-02);
+    a flat bar at entry_level no longer triggers (close isn't > entry_level)."""
+    return pd.DataFrame([{
+        "ts_ms": ts_ms, "ts": ts_ms, "open": entry_level + 0.05, "high": entry_level + 0.05,
+        "low": entry_level - 0.01, "close": entry_level + 0.05, "volume": 1.0,
+    }])
+
+
 def _pending_ob_signal(ts_ms: int):
-    # zone 1500-1510 bullish; deployed 15m/OB depth 0.575 -> entry level 1504.25;
-    # a bar at 1504.0 touches without closing below the stop.
+    # zone 1500-1510 bullish; 15m/OB has no CELL_CONFIG override since the
+    # 2026-08-02 prune, so depth_frac falls back to ZONE_CONFIG["OB"]'s 0.5.
     key = f"15m:OB:bullish:{ts_ms}:1500.000000:1510.000000"
     repo.upsert_zone_signal(key, "15m", "OB", "bullish", ts_ms, ts_ms, 1500.0, 1510.0)
     return key
+
+
+def _entry_level_15m_ob() -> float:
+    depth_frac = config.cell_config("15m", "OB")["depth_frac"]
+    zlo, zhi = 1500.0, 1510.0
+    return zhi - depth_frac * (zhi - zlo)  # bullish zone formula
 
 
 def _signal_status(key: str):
@@ -70,7 +86,7 @@ def test_veto_hour_touch_is_consumed_not_traded(monkeypatch):
     _force_15m_ob_active(monkeypatch)
     ts = _ts_at_hour(13)  # inside default 12-15h veto
     key = _pending_ob_signal(ts)
-    trig = signal_engine.scan_pending_zones(_df_one_bar(ts, 1504.0), "15m")
+    trig = signal_engine.scan_pending_zones(_df_touch_and_reject(ts, _entry_level_15m_ob()), "15m")
     assert trig == []
     assert _signal_status(key) == "expired"
 
@@ -80,7 +96,7 @@ def test_outside_veto_hour_triggers(monkeypatch):
     _force_15m_ob_active(monkeypatch)
     ts = _ts_at_hour(20)
     key = _pending_ob_signal(ts)
-    trig = signal_engine.scan_pending_zones(_df_one_bar(ts, 1504.0), "15m")
+    trig = signal_engine.scan_pending_zones(_df_touch_and_reject(ts, _entry_level_15m_ob()), "15m")
     assert len(trig) == 1 and trig[0].zone_key == key
     assert _signal_status(key) == "pending"
 
@@ -91,7 +107,7 @@ def test_empty_veto_set_disables(monkeypatch):
     monkeypatch.setattr(config, "ENTRY_VETO_UTC_HOURS", frozenset())
     ts = _ts_at_hour(13)
     key = _pending_ob_signal(ts)
-    trig = signal_engine.scan_pending_zones(_df_one_bar(ts, 1504.0), "15m")
+    trig = signal_engine.scan_pending_zones(_df_touch_and_reject(ts, _entry_level_15m_ob()), "15m")
     assert len(trig) == 1
     assert _signal_status(key) == "pending"
 
