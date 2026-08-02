@@ -70,13 +70,17 @@ def _process_tf(tf: str, now_ms: int) -> None:
     new_bars = [k for k in klines if last_processed is None or k["ts_ms"] > last_processed]
     if not new_bars:
         return
-    # Persists only the delta, not the full window: on cold start (last_processed
-    # is None) new_bars IS the whole backfill, so this still fully seeds the
-    # table. Edge case NOT covered: if the loop is down longer than tf_cfg's
-    # rolling_window covers (~21d for 15m), the next cold-start backfill only
-    # reaches back rolling_window bars from "now", leaving a permanent gap in
-    # klines between the old cursor and the new backfill's start.
-    repo.save_klines(tf, new_bars)
+    # Persist the FULL closed-bar window `klines` (market_data's in-memory
+    # view), not just `new_bars` (the delta vs the strategy's own processing
+    # cursor). Those are different things: on every container restart,
+    # `_kline_cache` resets and market_data re-backfills the full window from
+    # Bybit, but `last_processed` survives in the DB from before the restart
+    # -- so `new_bars` would only be the handful of bars closed since restart,
+    # leaving `klines` (and therefore api's /chart) missing all prior history
+    # until it slowly reaccumulates one bar at a time over days. Gating on
+    # `new_bars` non-empty (not calling this every idle tick) keeps the write
+    # cost to roughly once per bar close per TF instead of every poll.
+    repo.save_klines(tf, klines)
 
     df = signal_engine.klines_to_df(klines)
     signal_engine.sync_new_zones(df, tf)

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import db.repo as repo
 import loop
-from services import config, telegram_notify
+from services import config, market_data, signal_engine, telegram_notify
 
 
 def _fresh_db() -> str:
@@ -68,6 +68,37 @@ def test_save_klines_noop_on_empty_list():
     _fresh_db()
     repo.save_klines("15m", [])  # must not raise
     assert repo.get_klines("15m") == []
+
+
+# ── loop._process_tf: full-window persistence across a restart ─────────────
+
+
+def test_process_tf_persists_full_window_not_just_delta(monkeypatch):
+    """Regression: after a container restart, market_data's in-memory cache
+    resets and re-backfills the FULL window from Bybit, but repo's
+    last_processed cursor survives (it's in the DB). Persisting only the
+    bars newer than that old cursor would leave db.repo.klines (and
+    therefore api's /chart) missing almost all history, refilling one bar
+    at a time over days instead of being whole again on the very next tick."""
+    _fresh_db()
+    tf = "15m"
+    old_cursor = 5000  # far behind the fresh backfill below -- simulates a pre-restart cursor
+    repo.set_last_processed(tf, old_cursor)
+
+    full_window = [_bar(i * 1000, 1, 2, 0.5, 1.5) for i in range(1, 21)]  # ts 1000..20000
+    monkeypatch.setattr(market_data, "get_klines", lambda tf: full_window)
+    monkeypatch.setattr(signal_engine, "sync_new_zones", lambda df, tf: None)
+    monkeypatch.setattr(signal_engine, "scan_pending_zones", lambda df, tf: [])
+    monkeypatch.setattr(repo, "get_open_positions", lambda tf=None: [])
+    monkeypatch.setattr(market_data, "get_latest_dvol", lambda: None)
+
+    loop._process_tf(tf, now_ms=999_999_999)
+
+    persisted = repo.get_klines(tf, limit=100)
+    assert len(persisted) == len(full_window), (
+        "the full window must be persisted, not only the bars past the old cursor"
+    )
+    assert persisted[0]["ts_ms"] == 1000, "history from before the old cursor must not be dropped"
 
 
 # ── loop._check_stale_tfs ───────────────────────────────────────────────────
