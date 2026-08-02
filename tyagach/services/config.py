@@ -93,12 +93,40 @@ ZONE_CONFIG = {
 # MAX_TOTAL_MARGIN_PCT below still bound worst-case combined exposure even
 # though the cross-cell correlation these 5 might have live is unverified
 # (only the single-cell backtests were run, not a combined check).
-# 15m/OB DELIBERATELY EXCLUDED: 1/8 negative quarters AND its 60/20/20
-# validation split alone is net negative (-8.1%, calmar -0.78) despite
-# positive train/holdout -- the same per-trade-robust-but-portfolio-fragile
-# pattern that killed the pre-rejection-close 15m/OB. Needs a different
-# candidate (picked for validation robustness, not just train avg_pnl)
-# before it's addable.
+# 15m/OB originally EXCLUDED at U4 time: 1/8 negative quarters AND its
+# 60/20/20 validation split alone was net negative (-8.1%, calmar -0.78)
+# despite positive train/holdout, using the best-by-train-avg_pnl candidate.
+# 2026-08-02 follow-up: re-picked by MIN across all 3 splits' avg_pnl
+# instead of train-only (depth=0.700/r_target=4.0/expiry=0.083) -- this one
+# passes cleanly, 0/8 negative quarters, positive on all 3 splits
+# (src/u3_solo_validation.py-style solo check). Added below.
+#
+# 2026-08-02 follow-up (same day): MB re-swept with rejection-close
+# (src/bb_mb_rejection_sweep.py) -- MB was deactivated 2026-07-07 on a real
+# LIVE-performance override ("the sole bleeder, 15 trades, -$33.72, last 8
+# closes all MB"), before rejection-close or any other fix from this
+# session existed. Rejection-close targets exactly the kind of fakeout
+# entry that a naive touch-based trigger would have mistaken for a real
+# mitigation. All 4 MB timeframes now pass solo portfolio+quarter
+# validation cleanly (0/8 negative quarters each,
+# src/bb_mb_solo_validation.py) and the combined 13-cell book (all 8
+# already-live U4 cells + 15m/OB + 4x MB) beats the current 8-cell book on
+# every split/quarter tested (src/u_all13_combo_validation.py): validation
+# return +128.8%->+264.7%, holdout +270.1%->+542.5%, worst quarter
+# +36.0%->+55.3%, still 0/8 negative. Added below.
+# CAUTION: this reverses a decision that was based on REAL live losses, not
+# just a backtest miss -- rejection-close plausibly fixes the underlying
+# fakeout-entry mechanism, but that's an inference, not a live-tested fact.
+# Watch MB's live performance closely; if it bleeds again, deactivate it
+# again immediately rather than assuming the backtest must be right.
+#
+# BB re-swept too (same script) but NOT retuned: even the best candidate
+# re-picked for split-balance (depth=0.300/r_target=4.0/expiry=0.125) still
+# shows 2/8 negative quarters and a weak holdout (maxDD 12.7%, calmar 0.14)
+# -- looks like genuine small-sample fragility (BB has the fewest zones of
+# any kind), not a bad pick. BB stays on ZONE_CONFIG's untouched defaults
+# (still gets rejection-close for free, generically, since U1 -- just not a
+# retuned depth/r_target/expiry).
 CELL_CONFIG: dict[tuple[str, str], dict] = {
     ("2h", "OB"): {"depth_frac": 0.675, "r_target": 5.0, "expiry_days": 0.25},
     ("2h", "FVG"): {"depth_frac": 0.675, "r_target": 10.0, "expiry_days": 0.167},
@@ -107,6 +135,11 @@ CELL_CONFIG: dict[tuple[str, str], dict] = {
     ("30m", "FVG"): {"depth_frac": 0.300, "r_target": 7.0, "expiry_days": 0.125},
     ("1h", "FVG"): {"depth_frac": 0.325, "r_target": 7.0, "expiry_days": 0.167},
     ("15m", "FVG"): {"depth_frac": 0.300, "r_target": 10.0, "expiry_days": 0.125},
+    ("15m", "OB"): {"depth_frac": 0.700, "r_target": 4.0, "expiry_days": 0.083},
+    ("15m", "MB"): {"depth_frac": 0.425, "r_target": 7.0, "expiry_days": 0.125},
+    ("30m", "MB"): {"depth_frac": 0.400, "r_target": 10.0, "expiry_days": 0.167},
+    ("1h", "MB"): {"depth_frac": 0.400, "r_target": 10.0, "expiry_days": 0.25},
+    ("2h", "MB"): {"depth_frac": 0.500, "r_target": 3.0, "expiry_days": 0.25},
 }
 
 
@@ -185,9 +218,20 @@ TIMEFRAMES: dict[str, TF] = {
 #   comment above. Only 2h/OB (retuned) and 15m/BB (untouched) remained active.
 #   2026-08-02 (U2): 2h/FVG added alongside 2h/OB -- see CELL_CONFIG comment.
 #   2026-08-02 (U3/U4): 30m/OB, 1h/OB, 30m/FVG, 1h/FVG, 15m/FVG re-added --
-#   see CELL_CONFIG comment. 15m/OB stays out (flagged, not re-added).
+#   see CELL_CONFIG comment. 15m/OB stayed out at U4 time (flagged).
+#   2026-08-02 (follow-up, same day): 15m/OB re-added (re-picked config,
+#   passes cleanly) and ALL FOUR MB timeframes re-added (rejection-close
+#   reverses the 07-07 live-loss-driven deactivation on backtest -- see
+#   CELL_CONFIG comment for the caution about this being an inference, not
+#   a live-proven fact yet). BB stays on its untouched config (re-tuning
+#   attempts stayed fragile) but remains active as before.
 ACTIVE_CELLS: frozenset[tuple[str, str]] = frozenset({
     ("15m", "BB"),
+    ("15m", "OB"),
+    ("15m", "MB"),
+    ("30m", "MB"),
+    ("1h",  "MB"),
+    ("2h",  "MB"),
     ("2h",  "OB"),
     ("2h",  "FVG"),
     ("30m", "OB"),

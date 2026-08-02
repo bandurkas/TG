@@ -37,10 +37,11 @@ def _df_one_bar(ts_ms: int, low: float, high: float):
 
 
 def test_cell_config_falls_through_when_no_override():
-    # MB/BB have no CELL_CONFIG entries -> must equal ZONE_CONFIG[kind] exactly
-    for kind in ("MB", "BB"):
-        for tf in ("15m", "30m", "1h", "2h"):
-            assert config.cell_config(tf, kind) == config.ZONE_CONFIG[kind]
+    # BB has no CELL_CONFIG entries -> must equal ZONE_CONFIG[kind] exactly.
+    # MB HAD no overrides until 2026-08-02 (rejection-close re-sweep gave it
+    # one on every TF) -- see test_expected_cells_have_override_populated.
+    for tf in ("15m", "30m", "1h", "2h"):
+        assert config.cell_config(tf, "BB") == config.ZONE_CONFIG["BB"]
 
 
 def test_cell_config_override_merges_not_replaces():
@@ -61,11 +62,14 @@ def test_expected_cells_have_override_populated():
     # 2026-08-02 (P0): 15m/30m/1h OB overrides removed (deactivated in ACTIVE_CELLS).
     # 2026-08-02 (U2): 2h/FVG added alongside 2h/OB.
     # 2026-08-02 (U3/U4): 30m/OB, 1h/OB, 30m/FVG, 1h/FVG, 15m/FVG re-added.
-    # 15m/OB deliberately excluded (flagged, not portfolio-robust as-is).
+    # 2026-08-02 (follow-up): 15m/OB re-picked and re-added; all 4 MB
+    # timeframes added (rejection-close reverses the 07-07 deactivation on
+    # backtest). BB deliberately excluded -- stays on ZONE_CONFIG defaults.
     expected = {("2h", "OB"), ("2h", "FVG"), ("30m", "OB"), ("1h", "OB"),
-                ("30m", "FVG"), ("1h", "FVG"), ("15m", "FVG")}
+                ("30m", "FVG"), ("1h", "FVG"), ("15m", "FVG"), ("15m", "OB"),
+                ("15m", "MB"), ("30m", "MB"), ("1h", "MB"), ("2h", "MB")}
     assert set(config.CELL_CONFIG.keys()) == expected
-    assert ("15m", "OB") not in config.CELL_CONFIG
+    assert ("15m", "BB") not in config.CELL_CONFIG
     for tf, kind in expected:
         cfg = config.cell_config(tf, kind)
         assert {"depth_frac", "r_target", "expiry_days", "iv_threshold"} <= cfg.keys()
