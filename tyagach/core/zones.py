@@ -5,11 +5,12 @@ from typing import Literal
 from ob import OrderBlock
 from bb import BreakerBlock
 from mb import MitigationBlock
+from structure import FVG
 
 
 @dataclass
 class Zone:
-    kind: Literal["OB", "BB", "MB"]
+    kind: Literal["OB", "BB", "MB", "FVG"]
     formed_idx: int  # candle that completes/confirms the zone
     valid_from: int  # first candle index the zone can be traded from
     direction: Literal["bullish", "bearish"]
@@ -18,7 +19,8 @@ class Zone:
     meta: dict
 
 
-def build_zones(obs: list[OrderBlock], bbs: list[BreakerBlock], mbs: list[MitigationBlock]) -> list[Zone]:
+def build_zones(obs: list[OrderBlock], bbs: list[BreakerBlock], mbs: list[MitigationBlock],
+                 fvgs: list[FVG] | None = None) -> list[Zone]:
     zones: list[Zone] = []
     for o in obs:
         zones.append(Zone("OB", o.confirm_idx, o.confirm_idx + 1, o.direction, o.zone_low, o.zone_high,
@@ -29,5 +31,8 @@ def build_zones(obs: list[OrderBlock], bbs: list[BreakerBlock], mbs: list[Mitiga
     for m in mbs:
         zones.append(Zone("MB", m.idx, m.idx + 1, m.direction, m.zone_low, m.zone_high,
                            {"reinforced_by_ob": m.reinforced_by_ob, "broken_swing_idx": m.broken_swing_idx}))
+    for f in (fvgs or []):
+        direction = "bullish" if f.direction == "up" else "bearish"
+        zones.append(Zone("FVG", f.idx, f.idx + 1, direction, f.gap_low, f.gap_high, {}))
     zones.sort(key=lambda z: z.valid_from)
     return zones

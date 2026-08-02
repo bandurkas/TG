@@ -38,6 +38,9 @@ ZONE_CONFIG = {
     "OB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0, "depth_frac": 0.5},
     "MB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0, "depth_frac": 0.5},
     "BB": {"r_target": 2.5, "expiry_days": 5.0, "iv_threshold": 55.0, "depth_frac": 0.5},
+    # Untuned generic default -- FVG only ever trades via its CELL_CONFIG
+    # override below (2h), same pattern as OB.
+    "FVG": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0, "depth_frac": 0.5},
 }
 
 # Per-cell overrides — takes priority over ZONE_CONFIG[kind] when a (tf, kind)
@@ -68,8 +71,22 @@ ZONE_CONFIG = {
 # friction, and only after retuning r_target 3.0->5.0 / expiry 1.0->0.25d
 # (src/ob_2h_quarter_robustness.py: 5/8 quarters positive vs 1/8 for the old
 # live values). See ACTIVE_CELLS below -- those three TFs are deactivated.
+# 2026-08-02 U2 (TYAGACH_UPGRADE_PLAN_2026-08-02.md): FVG added as its own
+# tradeable zone kind (previously detect_fvg() output only widened OB zone
+# boundaries, never traded standalone). 2h/FVG with rejection-close entry is
+# the strongest single candidate found in the session's full re-sweep (8/8
+# quarters positive, mean +25.2%/quarter, worst +2.1%). Combined with 2h/OB
+# (only 1.8% zone overlap at 2h -- largely independent), the pair beats
+# either alone on every split/quarter tested (u2_ob_fvg_rejection_combo.py):
+# holdout return solo-OB +6.6%/solo-FVG +27.7%/combined +37.3%, quarter
+# robustness 0/8 negative for both FVG-only and combined (OB-only 1/8),
+# combined mean quarterly return +30.0% vs FVG-only's +25.2%, worst quarter
+# +1.2% vs +2.1% (still solidly positive) -- no meaningfully worse drawdown
+# (maxDD deltas <1pp, actually lower on validation/holdout). See
+# RESEARCH_FINDINGS_2026-08-02.md and TYAGACH_UPGRADE_PLAN_2026-08-02.md.
 CELL_CONFIG: dict[tuple[str, str], dict] = {
     ("2h", "OB"): {"depth_frac": 0.675, "r_target": 5.0, "expiry_days": 0.25},
+    ("2h", "FVG"): {"depth_frac": 0.675, "r_target": 10.0, "expiry_days": 0.167},
 }
 
 
@@ -84,9 +101,12 @@ def cell_config(tf: str, kind: str) -> dict:
 
 # Portfolio allocation — manually chosen (NOT the raw grid-search optimum),
 # see TYAGACH_HANDOFF.md "Portfolio allocation" section.
-PRIORITY = {"BB": 0, "MB": 1, "OB": 2}  # lower = higher priority
-WEIGHT_PCT = {"OB": 0.12, "MB": 0.18, "BB": 0.28}  # % of current balance per new position
-MAX_OPEN_PER_ZONE = {"OB": 3, "MB": 2, "BB": 1}   # caps apply within each TF sub-book
+# FVG given the same priority/weight/cap as OB (tied priority resolved by
+# entry_ts order alone) -- same risk-budget philosophy, no separate sizing
+# validation done, matches what u2_ob_fvg_rejection_combo.py actually tested.
+PRIORITY = {"BB": 0, "MB": 1, "OB": 2, "FVG": 2}  # lower = higher priority
+WEIGHT_PCT = {"OB": 0.12, "MB": 0.18, "BB": 0.28, "FVG": 0.12}  # % of current balance per new position
+MAX_OPEN_PER_ZONE = {"OB": 3, "MB": 2, "BB": 1, "FVG": 3}   # caps apply within each TF sub-book
 
 # Global ceiling across ALL timeframe sub-books combined.  Prevents all TFs
 # firing simultaneously from over-leveraging the single shared account.
@@ -141,11 +161,13 @@ TIMEFRAMES: dict[str, TF] = {
 #     (results/tyagach_ob_alltf.csv). Revisit after ~20-30 OB closes/cell.
 #   15m/BB — kept (passes all 3 splits at iv>=55; only 1 live trade so far).
 #   5m — still dead (gross < round-trip fee).
-#   2026-08-02: 15m/OB, 30m/OB, 1h/OB DEACTIVATED -- see CELL_CONFIG comment
-#   above. Only 2h/OB (retuned) and 15m/BB (untouched) remain active.
+#   2026-08-02 (P0): 15m/OB, 30m/OB, 1h/OB DEACTIVATED -- see CELL_CONFIG
+#   comment above. Only 2h/OB (retuned) and 15m/BB (untouched) remained active.
+#   2026-08-02 (U2): 2h/FVG added alongside 2h/OB -- see CELL_CONFIG comment.
 ACTIVE_CELLS: frozenset[tuple[str, str]] = frozenset({
     ("15m", "BB"),
     ("2h",  "OB"),
+    ("2h",  "FVG"),
 })
 
 # Ordered list of active TFs (determines loop processing order each tick).

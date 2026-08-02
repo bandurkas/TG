@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS tf_state (
 CREATE TABLE IF NOT EXISTS zone_signals (
     zone_key TEXT PRIMARY KEY,         -- f"{tf}:{kind}:{direction}:{formed_ts_ms}:{zone_low}:{zone_high}"
     timeframe TEXT NOT NULL DEFAULT '15m',
-    kind TEXT NOT NULL,                -- OB / BB / MB
+    kind TEXT NOT NULL,                -- OB / BB / MB / FVG
     direction TEXT NOT NULL,           -- bullish / bearish
     formed_ts_ms INTEGER NOT NULL,
     valid_from_ts_ms INTEGER NOT NULL,

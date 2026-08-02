@@ -57,11 +57,13 @@ def test_cell_config_override_merges_not_replaces():
         config.CELL_CONFIG = orig
 
 
-def test_only_2h_ob_has_override_populated():
-    # 2026-08-02: 15m/30m/1h OB overrides removed (deactivated in ACTIVE_CELLS).
-    assert set(config.CELL_CONFIG.keys()) == {("2h", "OB")}
-    cfg = config.cell_config("2h", "OB")
-    assert {"depth_frac", "r_target", "expiry_days", "iv_threshold"} <= cfg.keys()
+def test_only_2h_ob_and_2h_fvg_have_override_populated():
+    # 2026-08-02 (P0): 15m/30m/1h OB overrides removed (deactivated in ACTIVE_CELLS).
+    # 2026-08-02 (U2): 2h/FVG added alongside 2h/OB.
+    assert set(config.CELL_CONFIG.keys()) == {("2h", "OB"), ("2h", "FVG")}
+    for kind in ("OB", "FVG"):
+        cfg = config.cell_config("2h", kind)
+        assert {"depth_frac", "r_target", "expiry_days", "iv_threshold"} <= cfg.keys()
 
 
 def test_scan_pending_zones_uses_cell_depth_frac_not_hardcoded_midpoint():

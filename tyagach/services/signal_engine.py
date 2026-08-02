@@ -42,7 +42,7 @@ def detect_zones(df: pd.DataFrame) -> list[zones_mod.Zone]:
     obs = ob.detect_ob(df, swings, fvgs)
     bbs = bb.detect_bb(df, obs, events)
     mbs = mb.detect_mb(df, events, obs)
-    return zones_mod.build_zones(obs, bbs, mbs)
+    return zones_mod.build_zones(obs, bbs, mbs, fvgs)
 
 
 def zone_key(tf: str, z: zones_mod.Zone, formed_ts_ms: int) -> str:
