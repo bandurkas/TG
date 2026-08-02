@@ -16,6 +16,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db import repo
+import loop
 from services import config, signal_engine
 
 
@@ -67,6 +68,23 @@ def test_active_cell_pending_signal_still_evaluated():
         triggered = signal_engine.scan_pending_zones(_df_one_bar(ts0, price=entry_level), "15m")
         assert len(triggered) == 1
         assert triggered[0].kind == "OB"
+    finally:
+        config.ACTIVE_CELLS = orig_cells
+
+
+def test_expire_orphaned_pending_signals_reaches_inactive_tf():
+    """Regression (2026-08-02 OB prune): a TF dropped from ACTIVE_TFS entirely
+    (not just ACTIVE_CELLS) stops ticking, so scan_pending_zones's own cleanup
+    never runs for it -- loop._expire_orphaned_pending_signals must catch
+    those rows at startup regardless of ACTIVE_TFS."""
+    _setup_db()
+    orig_cells = config.ACTIVE_CELLS
+    try:
+        config.ACTIVE_CELLS = frozenset({("2h", "OB")})  # 30m/OB not active
+        repo.upsert_zone_signal("30m:OB:bullish:1:1500.000000:1510.000000",
+                                 "30m", "OB", "bullish", 1, 1, 1500.0, 1510.0)
+        loop._expire_orphaned_pending_signals()
+        assert repo.get_pending_zone_signals("30m") == []
     finally:
         config.ACTIVE_CELLS = orig_cells
 

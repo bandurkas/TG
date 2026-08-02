@@ -308,8 +308,20 @@ def _execute_close(ex: portfolio_state.ExitDecision) -> None:
     )
 
 
+def _expire_orphaned_pending_signals() -> None:
+    """One-time startup sweep: expire pending zone_signals whose (tf, kind)
+    is no longer in ACTIVE_CELLS. scan_pending_zones does this too, but only
+    for TFs still in ACTIVE_TFS -- a TF dropped from ACTIVE_TFS entirely
+    (e.g. 30m/1h, 2026-08-02 OB prune) stops ticking, so its stale pending
+    rows would otherwise sit in the DB forever."""
+    for row in repo.get_all_pending_zone_signals():
+        if (row["timeframe"], row["kind"]) not in config.ACTIVE_CELLS:
+            repo.set_zone_signal_status(row["zone_key"], "expired")
+
+
 def main() -> None:
     repo.init_db(STARTING_BALANCE)
+    _expire_orphaned_pending_signals()
     print(f"[loop] Tyagach starting, balance={STARTING_BALANCE}, "
           f"active_tfs={config.ACTIVE_TFS}", flush=True)
 

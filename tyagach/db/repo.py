@@ -233,6 +233,16 @@ def get_pending_zone_signals(timeframe: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_all_pending_zone_signals() -> list[dict]:
+    """Unlike get_pending_zone_signals, not scoped to one TF -- for cleanup
+    sweeps that must reach rows on a TF no longer in ACTIVE_TFS (scan_pending_
+    zones's own ACTIVE_CELLS cleanup only runs for TFs still being ticked)."""
+    conn = _connect()
+    rows = conn.execute("SELECT * FROM zone_signals WHERE status = 'pending'").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def set_zone_signal_status(zone_key: str, status: str) -> None:
     conn = _connect()
     conn.execute("UPDATE zone_signals SET status = ? WHERE zone_key = ?", (status, zone_key))

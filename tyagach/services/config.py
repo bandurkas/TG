@@ -59,15 +59,17 @@ ZONE_CONFIG = {
 # want to revert) — cell_config() falls back to ZONE_CONFIG["OB"]'s untouched
 # 0.50/3.0/0.5/50.0 automatically, no other code change needed.
 #
-# NOT yet re-validated on live paper data beyond a tiny (~8-trade) since-launch
-# replay — that sample is far below MIN_N=30 and showed a small (noise-level)
-# underperformance, not a contradiction of the large-sample backtest. Revisit
-# once 20-30+ live OB closes/cell accumulate under these values.
+# 2026-08-02 revision: 15m/30m/1h OB entries REMOVED. Live fill-haircut audit
+# (27 closed trades, ~83-90% of BS-mid) + a full re-sweep under that haircut
+# found zero robust (depth, r_target, expiry) combo for 15m/1h anywhere in a
+# wide grid, and 30m only "robust" per-trade -- fails at the portfolio level
+# (drags the combined book negative on train+validation, see
+# src/ob_portfolio_compare_haircut.py). Only 2h/OB survives realistic
+# friction, and only after retuning r_target 3.0->5.0 / expiry 1.0->0.25d
+# (src/ob_2h_quarter_robustness.py: 5/8 quarters positive vs 1/8 for the old
+# live values). See ACTIVE_CELLS below -- those three TFs are deactivated.
 CELL_CONFIG: dict[tuple[str, str], dict] = {
-    ("15m", "OB"): {"depth_frac": 0.575, "r_target": 10.0, "expiry_days": 0.25},
-    ("30m", "OB"): {"depth_frac": 0.500, "r_target": 7.0,  "expiry_days": 0.25},
-    ("1h",  "OB"): {"depth_frac": 0.325, "r_target": 8.0,  "expiry_days": 0.75},
-    ("2h",  "OB"): {"depth_frac": 0.675, "r_target": 3.0,  "expiry_days": 1.00},
+    ("2h", "OB"): {"depth_frac": 0.675, "r_target": 5.0, "expiry_days": 0.25},
 }
 
 
@@ -139,15 +141,17 @@ TIMEFRAMES: dict[str, TF] = {
 #     (results/tyagach_ob_alltf.csv). Revisit after ~20-30 OB closes/cell.
 #   15m/BB — kept (passes all 3 splits at iv>=55; only 1 live trade so far).
 #   5m — still dead (gross < round-trip fee).
+#   2026-08-02: 15m/OB, 30m/OB, 1h/OB DEACTIVATED -- see CELL_CONFIG comment
+#   above. Only 2h/OB (retuned) and 15m/BB (untouched) remain active.
 ACTIVE_CELLS: frozenset[tuple[str, str]] = frozenset({
-    ("15m", "OB"), ("15m", "BB"),
-    ("30m", "OB"),
-    ("1h",  "OB"),
+    ("15m", "BB"),
     ("2h",  "OB"),
 })
 
-# Ordered list of active TFs (determines loop processing order each tick)
-ACTIVE_TFS: list[str] = ["15m", "30m", "1h", "2h"]
+# Ordered list of active TFs (determines loop processing order each tick).
+# 30m/1h dropped 2026-08-02 -- zero active cells left on those TFs, would
+# just be wasted Bybit fetches with no possible signal.
+ACTIVE_TFS: list[str] = ["15m", "2h"]
 
 SYMBOL = "ETHUSDT"
 BASE_COIN = "ETH"

@@ -31,6 +31,13 @@ def _setup_db():
     repo.init_db(2000.0)
 
 
+def _force_15m_ob_active(monkeypatch):
+    # 15m/OB deactivated 2026-08-02 (see config.py) -- these tests are about
+    # veto/fill-floor logic, not cell activation, so force it active for the
+    # duration of the test rather than rewriting fixtures around a live cell.
+    monkeypatch.setattr(config, "ACTIVE_CELLS", config.ACTIVE_CELLS | {("15m", "OB")})
+
+
 def _ts_at_hour(hour: int) -> int:
     return int(dt.datetime(2026, 7, 9, hour, 0, tzinfo=dt.timezone.utc).timestamp() * 1000)
 
@@ -58,8 +65,9 @@ def _signal_status(key: str):
     return row[0]
 
 
-def test_veto_hour_touch_is_consumed_not_traded():
+def test_veto_hour_touch_is_consumed_not_traded(monkeypatch):
     _setup_db()
+    _force_15m_ob_active(monkeypatch)
     ts = _ts_at_hour(13)  # inside default 12-15h veto
     key = _pending_ob_signal(ts)
     trig = signal_engine.scan_pending_zones(_df_one_bar(ts, 1504.0), "15m")
@@ -67,8 +75,9 @@ def test_veto_hour_touch_is_consumed_not_traded():
     assert _signal_status(key) == "expired"
 
 
-def test_outside_veto_hour_triggers():
+def test_outside_veto_hour_triggers(monkeypatch):
     _setup_db()
+    _force_15m_ob_active(monkeypatch)
     ts = _ts_at_hour(20)
     key = _pending_ob_signal(ts)
     trig = signal_engine.scan_pending_zones(_df_one_bar(ts, 1504.0), "15m")
@@ -78,6 +87,7 @@ def test_outside_veto_hour_triggers():
 
 def test_empty_veto_set_disables(monkeypatch):
     _setup_db()
+    _force_15m_ob_active(monkeypatch)
     monkeypatch.setattr(config, "ENTRY_VETO_UTC_HOURS", frozenset())
     ts = _ts_at_hour(13)
     key = _pending_ob_signal(ts)
