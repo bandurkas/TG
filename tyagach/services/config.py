@@ -164,7 +164,16 @@ MAX_OPEN_PER_ZONE = {"OB": 3, "MB": 2, "BB": 1, "FVG": 3}   # caps apply within 
 # Global ceiling across ALL timeframe sub-books combined.  Prevents all TFs
 # firing simultaneously from over-leveraging the single shared account.
 MAX_OPEN_TOTAL_GLOBAL = 8   # hard cap on simultaneous positions across all TFs
-MAX_TOTAL_MARGIN_PCT = 0.60  # combined open margin must not exceed 60% of balance
+# 2026-08-02 (headroom re-check, now that 13 cells are live vs the 1 cell
+# this was last tested against): MAX_OPEN_TOTAL_GLOBAL 8->12/16 changed
+# NOTHING at any margin level (src/u_cap_headroom_13cell.py) -- the
+# per-TF same-direction rule is still the real limiter, not the slot count.
+# MAX_TOTAL_MARGIN_PCT 0.60->0.80 DOES have real headroom: validation
+# +425%->+463%, holdout +433%->+448%, worst quarter +68.4%->+78.1%, for a
+# modest maxDD cost (+0.3-0.7pp). Pushing further to ~uncapped (0.99)
+# stops helping and the worst quarter gets WORSE (78.1%->73.8%) -- 0.80 is
+# the sweet spot, not "more is strictly better."
+MAX_TOTAL_MARGIN_PCT = 0.80  # combined open margin must not exceed 80% of balance
 
 LOT_SIZE = 0.10  # ETH options min lot on Bybit (matches live_sizing.py convention)
 MARGIN_PCT = 0.15
