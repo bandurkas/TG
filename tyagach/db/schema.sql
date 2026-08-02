@@ -73,3 +73,18 @@ CREATE TABLE IF NOT EXISTS equity_snapshots (
 );
 
 CREATE INDEX IF NOT EXISTS idx_equity_ts ON equity_snapshots(ts_ms);
+
+-- Closed klines, written by the loop process as it fetches them (single
+-- source of truth), read by the api process for /chart -- replaces api's
+-- own independent Bybit cold-start backfill + incremental polling, which
+-- doubled kline fetch volume against the same rate-limited endpoint.
+CREATE TABLE IF NOT EXISTS klines (
+    timeframe TEXT NOT NULL,
+    ts_ms INTEGER NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    volume REAL NOT NULL,
+    PRIMARY KEY (timeframe, ts_ms)
+);

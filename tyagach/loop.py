@@ -70,6 +70,13 @@ def _process_tf(tf: str, now_ms: int) -> None:
     new_bars = [k for k in klines if last_processed is None or k["ts_ms"] > last_processed]
     if not new_bars:
         return
+    # Persists only the delta, not the full window: on cold start (last_processed
+    # is None) new_bars IS the whole backfill, so this still fully seeds the
+    # table. Edge case NOT covered: if the loop is down longer than tf_cfg's
+    # rolling_window covers (~21d for 15m), the next cold-start backfill only
+    # reaches back rolling_window bars from "now", leaving a permanent gap in
+    # klines between the old cursor and the new backfill's start.
+    repo.save_klines(tf, new_bars)
 
     df = signal_engine.klines_to_df(klines)
     signal_engine.sync_new_zones(df, tf)
@@ -111,6 +118,38 @@ def _process_tf(tf: str, now_ms: int) -> None:
                     _execute_open(d)
 
     repo.set_last_processed(tf, new_bars[-1]["ts_ms"])
+
+
+_STALE_ALERTED: set[str] = set()
+_STALE_FLOOR_MS = 2 * 3600 * 1000  # minimum staleness window regardless of TF cadence
+
+
+def _check_stale_tfs(now_ms: int) -> None:
+    """Telegram alert if a TF's processing cursor hasn't advanced within a
+    generous multiple of its own bar width -- catches a loop that's alive
+    (still ticking, no exceptions in the log) but silently stuck on one TF,
+    e.g. Bybit returning no/stale data for that interval indefinitely. Does
+    NOT catch every silent-failure shape (the 2026-08-02 kline-cache bug
+    still advanced cursors fine, just on corrupted OHLC -- see
+    market_data._merge_into_cache) but is cheap ops insurance against a TF
+    going fully dark, which previously required a human to notice and ask.
+    Dedup mirrors Jony's stuck-position-alert pattern: alert once per stall,
+    clear on recovery so a later stall re-alerts."""
+    for tf in config.ACTIVE_TFS:
+        last = repo.get_last_processed(tf)
+        if last is None:
+            continue
+        threshold = max(3 * config.TIMEFRAMES[tf].bar_ms, _STALE_FLOOR_MS)
+        stale = now_ms - last > threshold
+        if stale and tf not in _STALE_ALERTED:
+            _STALE_ALERTED.add(tf)
+            hours = (now_ms - last) / 3_600_000
+            telegram_notify.notify(
+                f"⚠️ <b>{tf} cursor stale</b> — no new bar processed in {hours:.1f}h. "
+                f"Loop is alive but this TF may be stuck.",
+            )
+        elif not stale and tf in _STALE_ALERTED:
+            _STALE_ALERTED.discard(tf)
 
 
 def _sweep_real_expiry(now_ms: int) -> None:
@@ -281,6 +320,7 @@ def main() -> None:
                     _process_tf(tf, now_ms)
                 except Exception as e:  # noqa: BLE001
                     print(f"[loop] {tf} tick error: {e!r}", flush=True)
+            _check_stale_tfs(now_ms)
         except Exception as e:  # noqa: BLE001
             print(f"[loop] outer tick error: {e!r}", flush=True)
         time.sleep(config.POLL_SECONDS)

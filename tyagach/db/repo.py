@@ -137,6 +137,37 @@ def last_equity_snapshot_ts_ms() -> int:
     return int(row["m"] or 0)
 
 
+def save_klines(tf: str, bars: list[dict]) -> None:
+    """Upsert closed bars for `tf`, written by the loop process only. Last-
+    write-wins per (tf, ts_ms), same self-healing semantics as
+    market_data._merge_into_cache's in-memory overwrite."""
+    if not bars:
+        return
+    conn = _connect()
+    conn.executemany(
+        "INSERT INTO klines (timeframe, ts_ms, open, high, low, close, volume) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(timeframe, ts_ms) DO UPDATE SET "
+        "open=excluded.open, high=excluded.high, low=excluded.low, "
+        "close=excluded.close, volume=excluded.volume",
+        [(tf, b["ts_ms"], b["open"], b["high"], b["low"], b["close"], b["volume"]) for b in bars],
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_klines(tf: str, limit: int = 1000) -> list[dict]:
+    """Most recent `limit` closed bars for `tf`, oldest->newest."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT ts_ms, open, high, low, close, volume FROM klines "
+        "WHERE timeframe = ? ORDER BY ts_ms DESC LIMIT ?",
+        (tf, limit),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in reversed(rows)]
+
+
 def set_paused(paused: bool) -> None:
     conn = _connect()
     conn.execute(

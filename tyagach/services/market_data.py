@@ -159,20 +159,17 @@ def get_klines(tf: str = "15m") -> list[dict]:
     return closed
 
 
-def get_klines_for_chart(tf: str = "15m", limit: int = 288) -> list[dict]:
-    """Closed bars PLUS the live forming bar — for the dashboard chart ONLY.
-
-    The strategy path stays on get_klines() (closed bars): a forming bar in
-    the signal pipeline would repaint zones mid-bar. Without this, the chart
-    freezes for up to a full bar width between closes ("не тикает"). Fetches
-    just the 2 freshest bars per call; the caller must TTL-cache (api.py's
-    /chart does, 25s) so dashboard polling doesn't hit Bybit rate limits."""
-    closed = get_klines(tf)
-    fresh = _fetch_klines_paged(config.TIMEFRAMES[tf].interval, 2)
-    merged = {b["ts_ms"]: b for b in closed}
-    for b in fresh:
-        merged[b["ts_ms"]] = b
-    return sorted(merged.values(), key=lambda b: b["ts_ms"])[-limit:]
+def get_latest_forming_bar(tf: str = "15m", n: int = 2) -> list[dict]:
+    """Direct, cache-free Bybit fetch of the freshest `n` bars (may include
+    the still-forming bar) — for the dashboard chart only, merged by the
+    caller on top of closed bars read from db.repo (the loop-written shared
+    cache). Deliberately bypasses `_kline_cache`/`get_klines()`: before
+    2026-08-02 the api process ran its own independent copy of that cache
+    (its own cold-start backfill + incremental polling), doubling kline
+    fetch volume against the same Bybit rate limit the loop was already
+    hitting. This function makes exactly one small request and holds no
+    state; the caller must TTL-cache the result (api.py's /chart does, 25s)."""
+    return _fetch_klines_paged(config.TIMEFRAMES[tf].interval, n)
 
 
 def get_spot_price() -> float:

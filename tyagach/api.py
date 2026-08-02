@@ -99,13 +99,20 @@ def get_chart(kline_limit: int = 288):
     levels already — the R-multiple system operates directly on price, so no
     back-solving is needed here.
 
-    Uses get_klines_for_chart (closed bars + live forming bar) so the chart
-    ticks between 15m closes instead of freezing for a full bar width."""
+    Closed bars come from db.repo (written by the loop process, see
+    market_data.get_latest_forming_bar's docstring for why api no longer
+    fetches its own closed-bar history from Bybit); only the still-forming
+    bar is fetched directly here so the chart ticks between 15m closes
+    instead of freezing for a full bar width."""
     import time as _t
     now = _t.time()
     if now - _chart_cache["ts"] > 25:
-        _chart_cache.update(ts=now,
-                            klines=market_data.get_klines_for_chart("15m", 1000))
+        closed = repo.get_klines("15m", 1000)
+        fresh = market_data.get_latest_forming_bar("15m", 2)
+        merged = {b["ts_ms"]: b for b in closed}
+        for b in fresh:
+            merged[b["ts_ms"]] = b
+        _chart_cache.update(ts=now, klines=sorted(merged.values(), key=lambda b: b["ts_ms"])[-1000:])
     klines = _chart_cache["klines"][-kline_limit:]
     spot = klines[-1]["close"] if klines else None
     open_positions = repo.get_open_positions()
