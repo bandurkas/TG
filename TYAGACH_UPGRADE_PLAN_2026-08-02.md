@@ -21,7 +21,7 @@ not just wick through it).
   rejection-close hasn't been run standalone, only spot-checked per-trade;
   run it once for the record before deploying, cheap).
 
-## U2 — Decide 2h/OB vs 2h/FVG vs both (blocks on one more test)
+## U2 — Decide 2h/OB vs 2h/FVG vs both — **DONE, SHIPPED** (`9b795fa`)
 
 2h/FVG+rejection alone is the strongest single candidate found all session
 (8/8 quarters, mean +25.2%, worst +2.1%) — better than 2h/OB+rejection on
@@ -38,6 +38,24 @@ plain-touch one).
 - **Decision rule**: ship whichever of {2h/OB only, 2h/FVG only, both
   combined} wins on quarter-robustness (fewest negative quarters, best
   worst-quarter) without meaningfully worse drawdown than the solo winner.
+- **Result** (`src/u2_ob_fvg_rejection_combo.py`): combined wins. 0/8
+  quarters negative (tied with FVG-only, vs OB-only's 1/8), mean quarterly
+  return +30.0% (vs FVG-only's +25.2%), worst quarter +1.2% (vs FVG-only's
+  +2.1% — still solidly positive) drawdown deltas <1pp and actually lower
+  than FVG-only on validation/holdout. Portfolio (60/20/20): holdout return
+  OB-only +6.6% / FVG-only +27.7% / combined +37.3%.
+- **Shipped**: FVG added as its own tradeable Zone kind end-to-end (was
+  previously only used to widen OB zone boundaries) — `tyagach/core/zones.py`,
+  `tyagach/services/signal_engine.py`, `tyagach/services/config.py`
+  (CELL_CONFIG depth=0.675/r_target=10.0/expiry=0.167, PRIORITY=2 tied with
+  OB, WEIGHT_PCT=0.12, MAX_OPEN_PER_ZONE=3 — same risk-budget tier as OB,
+  matches what was actually backtested). 7 new tests
+  (`tyagach/tests/test_fvg_zone_kind.py`), 86/86 total pass. Independent
+  review confirmed live FVG→Zone mapping and rejection-close entry are
+  byte-identical to the backtest (`src/fvg_depth_sweep.py`,
+  `src/fvg_rejection_entry.py`). Deployed to VPS3, confirmed live via
+  `config.ACTIVE_CELLS`/`cell_config("2h","FVG")` inside the running
+  container, balance/positions untouched, no errors in loop logs.
 
 ## U3 — Solo per-TF validation for 1h/30m/15m × {OB, FVG} (before adding anything else)
 
