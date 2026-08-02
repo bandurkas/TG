@@ -196,6 +196,50 @@
   NOT blow up, so this finding may not survive either. Re-check before
   trusting either version.
 
+## Capacity-model sensitivity check — DONE, multi-TF story survives directionally
+
+`src/rejection_multitf_capacity.py`: capped position-sizing budget at
+`weight_pct * min(balance, CAP)` instead of `weight_pct * balance`, swept
+CAP from uncapped down to $5,000 (2.5x starting capital -- a deliberately
+harsh assumption, no real Bybit ETH options depth data exists to calibrate
+this precisely, this is a sensitivity bound not a calibrated number):
+
+| cap | full-period return | quarters negative | mean/quarter | worst quarter |
+|---|---|---|---|---|
+| uncapped | +7,073,182% | 0/8 | +448.9% | +42.9% |
+| $100,000 | +43,944% | 0/8 | +448.9% | +42.9% |
+| $50,000 | +23,690% | 0/8 | +448.9% | +42.9% |
+| $20,000 | +10,328% | 0/8 | +415.8% | +42.9% |
+| $10,000 | +5,426% | 0/8 | +350.0% | +42.9% |
+| $5,000 | +2,800% | 0/8 | +271.2% | +42.9% |
+
+**Conclusion**: the full-4-year compounded % is obviously absurd at every
+cap level (even $2,800% over 4y is not a number to trust literally) --
+that's compounding at ~20 trades/day sustained for years, no backtest
+number at that frequency should be read literally. But the **directional
+robustness holds at every capacity level tested**: 0/8 negative quarters,
+worst single quarter always +42.9% (that quarter apparently never grows
+balance anywhere near even the tightest $5k cap, so capping doesn't
+change it). This is real evidence the multi-TF blow-up problem from the
+old touch-only entries is genuinely fixed, not just hidden by compounding.
+
+**Remaining, unresolved caveat (methodological, not numerical)**: the 4
+per-TF configs combined here were each individually chosen as the "best by
+train avg_pnl" among hundreds of per-TF-robust candidates, then combined
+without any holdout-blind check on the COMBINATION choice itself. Selection
+was holdout-blind by construction (ranked by train, not holdout), which
+mitigates but doesn't eliminate multiple-comparison risk when combining 4
+independently-optimized legs. Not fully resolved.
+
+**Recommendation given all of this**: the single validated, uncombined,
+capacity-irrelevant-at-Tyagach's-real-scale (~$2000) candidate is
+**2h/FVG + rejection-close alone** (8/8 quarters, mean +25.2%/quarter,
+worst +2.1%) -- lowest risk, ready to deploy now. The multi-TF story is
+directionally real but its magnitude is unresolved; if pursued, a staged
+live rollout (add one TF at a time, watch real performance before adding
+the next) is safer than deploying the full combination on backtest numbers
+alone.
+
 ## Open question from user (2026-08-02, deferred)
 
 - **Does the rejection-close entry finding (and the broader haircut/
