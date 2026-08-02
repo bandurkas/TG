@@ -84,9 +84,29 @@ ZONE_CONFIG = {
 # +1.2% vs +2.1% (still solidly positive) -- no meaningfully worse drawdown
 # (maxDD deltas <1pp, actually lower on validation/holdout). See
 # RESEARCH_FINDINGS_2026-08-02.md and TYAGACH_UPGRADE_PLAN_2026-08-02.md.
+# 2026-08-02 U3+U4 (same doc): solo portfolio+quarter validation
+# (src/u3_solo_validation.py, best-by-train-avg_pnl candidate per pair) found
+# 5 of the remaining 6 cells robust -- 30m/OB, and FVG on 30m/1h/15m all pass
+# 0/8 negative quarters; 1h/OB passes marginally (1/8, shallow -0.8% worst).
+# All 5 added here per explicit user call to move on every validated cell at
+# once rather than stage one at a time -- MAX_OPEN_TOTAL_GLOBAL/
+# MAX_TOTAL_MARGIN_PCT below still bound worst-case combined exposure even
+# though the cross-cell correlation these 5 might have live is unverified
+# (only the single-cell backtests were run, not a combined check).
+# 15m/OB DELIBERATELY EXCLUDED: 1/8 negative quarters AND its 60/20/20
+# validation split alone is net negative (-8.1%, calmar -0.78) despite
+# positive train/holdout -- the same per-trade-robust-but-portfolio-fragile
+# pattern that killed the pre-rejection-close 15m/OB. Needs a different
+# candidate (picked for validation robustness, not just train avg_pnl)
+# before it's addable.
 CELL_CONFIG: dict[tuple[str, str], dict] = {
     ("2h", "OB"): {"depth_frac": 0.675, "r_target": 5.0, "expiry_days": 0.25},
     ("2h", "FVG"): {"depth_frac": 0.675, "r_target": 10.0, "expiry_days": 0.167},
+    ("30m", "OB"): {"depth_frac": 0.300, "r_target": 10.0, "expiry_days": 0.125},
+    ("1h", "OB"): {"depth_frac": 0.650, "r_target": 5.0, "expiry_days": 0.125},
+    ("30m", "FVG"): {"depth_frac": 0.300, "r_target": 7.0, "expiry_days": 0.125},
+    ("1h", "FVG"): {"depth_frac": 0.325, "r_target": 7.0, "expiry_days": 0.167},
+    ("15m", "FVG"): {"depth_frac": 0.300, "r_target": 10.0, "expiry_days": 0.125},
 }
 
 
@@ -164,16 +184,22 @@ TIMEFRAMES: dict[str, TF] = {
 #   2026-08-02 (P0): 15m/OB, 30m/OB, 1h/OB DEACTIVATED -- see CELL_CONFIG
 #   comment above. Only 2h/OB (retuned) and 15m/BB (untouched) remained active.
 #   2026-08-02 (U2): 2h/FVG added alongside 2h/OB -- see CELL_CONFIG comment.
+#   2026-08-02 (U3/U4): 30m/OB, 1h/OB, 30m/FVG, 1h/FVG, 15m/FVG re-added --
+#   see CELL_CONFIG comment. 15m/OB stays out (flagged, not re-added).
 ACTIVE_CELLS: frozenset[tuple[str, str]] = frozenset({
     ("15m", "BB"),
     ("2h",  "OB"),
     ("2h",  "FVG"),
+    ("30m", "OB"),
+    ("1h",  "OB"),
+    ("30m", "FVG"),
+    ("1h",  "FVG"),
+    ("15m", "FVG"),
 })
 
 # Ordered list of active TFs (determines loop processing order each tick).
-# 30m/1h dropped 2026-08-02 -- zero active cells left on those TFs, would
-# just be wasted Bybit fetches with no possible signal.
-ACTIVE_TFS: list[str] = ["15m", "2h"]
+# 30m/1h re-added 2026-08-02 (U3/U4) -- both have active cells again.
+ACTIVE_TFS: list[str] = ["15m", "30m", "1h", "2h"]
 
 SYMBOL = "ETHUSDT"
 BASE_COIN = "ETH"
