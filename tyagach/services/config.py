@@ -228,6 +228,64 @@ MARGIN_PCT = 0.15
 FEE_RATE = 0.0003    # 0.03% of underlying notional per side (real Bybit options taker)
 FEE_CAP_PCT = 0.125  # capped at 12.5% of option premium per side
 
+# Per-position trailing profit-lock (2026-08-03, src/trailing_profit_lock_sweep.py
+# + trailing_profit_lock_combo_check.py). Independent of the level-based SL/TP
+# in portfolio_state.check_exits -- this is a second, parallel exit check
+# (portfolio_state.check_trailing_exits, run every loop tick in
+# loop._sweep_trailing_exits) that tracks each position's OWN running peak of
+# unrealized $ PnL; once the peak reaches arm_frac * premium collected
+# (sell_premium_received), if unrealized PnL gives back trail_frac of that
+# peak, the position closes early with exit_reason='trail'. Whichever check
+# fires first on a given tick wins (level-based runs first each tick, so it
+# always wins a same-tick race, matching the backtest's bar-order convention).
+#
+# Different from the REJECTED basket-level trailing (basket_trailing_stop_
+# research.py, same session) which trailed AGGREGATE unrealized PnL across
+# the whole open book and force-closed everything at once -- that clipped
+# winners before they reached full R. This is per-trade: only the one
+# position that actually reverses closes early; the rest keep riding to
+# their own TP as before.
+#
+# Per-cell sweep (12 active cells x arm_frac in {0.1..1.0} x trail_frac in
+# {0.1..0.7}, 60/20/20 splits + 8-quarter robustness) found a clean win
+# (validation AND holdout calmar up, 0/8 negative quarters preserved) on
+# these 8 cells; the other 4 (2h/OB, 2h/FVG -- too little time to expiry,
+# matches fvg_trail_to_breakeven.py's earlier no-op finding; 30m/MB, 1h/MB
+# -- mixed/negative even on the finer grid) are deliberately absent --
+# absence means trailing never arms for that cell.
+#
+# 2026-08-03 follow-up (user wanted MAXIMAL profit protection, not just the
+# calmar optimum -- a real live case that morning showed why: 3 positions
+# spiked into meaningful intrabar profit within their own entry bar, then
+# gave it all back, 2 of which crossed the ORIGINAL arm thresholds and would
+# have been protected, the 3rd peaked at $1.52 against a $4.32 threshold and
+# wouldn't have): re-swept with a finer grid down to arm_frac=0.1/
+# trail_frac=0.1. Tightened 3 cells where a lower arm_frac protects smaller
+# profits sooner AND performs equal-or-better on both splits (1h/OB
+# 0.5->0.1 arm, hold calmar 1.57->2.06; 1h/FVG 0.3->0.1 arm, hold calmar
+# 6.96->9.34; 30m/FVG 0.3->0.2 arm). The other 5 cells got WORSE with a
+# tighter arm (their winners need more room to develop before locking in is
+# worth it -- confirmed by the sweep, not assumed) -- left at their
+# original, already-validated values rather than sacrificing edge for
+# tightness alone.
+#
+# Portfolio combo-check (all 12 cells competing for the same margin/priority
+# slots, not evaluated in isolation) confirmed the win survives at the whole-
+# book level: validation calmar 106.3->118.6, holdout 68.3->74.1, maxDD down
+# on every split (18.7%->16.8% val, 14.9%->14.2% hold), 0/8 negative quarters
+# preserved, worst quarter +73.2%->+88.0%. Return is roughly flat -- the gain
+# is materially lower drawdown for the same return, not a return boost.
+TRAIL_PARAMS: dict[tuple[str, str], tuple[float, float]] = {
+    ("1h", "OB"):    (0.1, 0.1),
+    ("30m", "OB"):   (0.7, 0.3),
+    ("30m", "FVG"):  (0.2, 0.7),
+    ("15m", "FVG"):  (0.5, 0.3),
+    ("15m", "MB"):   (0.3, 0.5),
+    ("15m", "OB"):   (0.5, 0.5),
+    ("1h", "FVG"):   (0.1, 0.3),
+    ("2h", "MB"):    (0.5, 0.5),
+}
+
 SWING_ORDER = 3  # fractal swing detection lookback, matches research
 
 

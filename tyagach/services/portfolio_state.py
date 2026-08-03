@@ -144,6 +144,40 @@ def check_exits(open_positions: list[dict], latest_high: float, latest_low: floa
     return out
 
 
+def check_trailing_exits(open_positions: list[dict]) -> tuple[list[ExitDecision], list[tuple[int, float]]]:
+    """Per-position trailing profit-lock (config.TRAIL_PARAMS) -- a second,
+    independent exit check alongside the level-based check_exits above.
+    Tracks each position's own running peak of unrealized $ PnL; once the
+    peak reaches arm_frac * premium collected, closes early ('trail') if
+    unrealized PnL gives back trail_frac of that peak. Cells absent from
+    TRAIL_PARAMS never arm. Caller must have already enriched `open_positions`
+    with unrealized_pnl_usd (services.mark_pricing.enrich_positions_with_mark).
+
+    Returns (exits, peak_updates): peak_updates is [(position_id, new_peak)]
+    for positions whose peak advanced this tick but did NOT exit -- caller
+    persists these via repo.update_trail_peak so the peak survives a
+    restart. Positions that exit don't need a peak update (position closes)."""
+    exits: list[ExitDecision] = []
+    peak_updates: list[tuple[int, float]] = []
+    for p in open_positions:
+        params = config.TRAIL_PARAMS.get((p["timeframe"], p["zone_kind"]))
+        if params is None:
+            continue
+        unrealized = p.get("unrealized_pnl_usd")
+        if unrealized is None:
+            continue
+        arm_frac, trail_frac = params
+        premium = p["sell_premium_received"]
+        old_peak = p.get("trail_peak_usd") or 0.0
+        peak = max(old_peak, unrealized)
+        armed = peak >= arm_frac * premium
+        if armed and peak > 0 and unrealized <= peak * (1 - trail_frac):
+            exits.append(ExitDecision(p, "trail"))
+        elif peak != old_peak:
+            peak_updates.append((p["id"], peak))
+    return exits, peak_updates
+
+
 def check_expiry_only(open_positions: list[dict], now_ts_ms: int) -> list[ExitDecision]:
     """Wall-clock expiry sweep regardless of TF bar cadence — called once per
     loop tick for ALL open positions so nothing is held past instrument expiry."""

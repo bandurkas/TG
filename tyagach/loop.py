@@ -4,6 +4,10 @@
   2. Realtime exit sweep — check SL/TP for ALL open positions against the
      live spot price, regardless of TF cadence (so a position can't sit past
      its TP/SL for up to a full bar width waiting on its own TF to close).
+  2b. Trailing profit-lock sweep — independent per-position check (config.
+      TRAIL_PARAMS): once a position's unrealized profit reaches an armed
+      threshold, closes early if it gives back enough of its peak. Runs
+      after #2 so level-based SL/TP always wins a same-tick race.
   3. For each active TF whose bar(s) have closed since its cursor:
        a. sync_new_zones + scan_pending_zones on the rolling window.
        b. Walk new bars chronologically: check SL/TP for that TF's positions
@@ -191,6 +195,31 @@ def _sweep_realtime_exits(now_ms: int) -> None:
         _execute_close(ex)
 
 
+def _sweep_trailing_exits(now_ms: int) -> None:
+    """Per-position trailing profit-lock (system 2, config.TRAIL_PARAMS) --
+    runs every tick, right after the level-based SL/TP sweep above (system
+    1) so a position that hit its hard SL/TP this tick is already closed
+    and excluded here; level-based always wins a same-tick race, matching
+    the backtest's bar-order convention (see check_trailing_exits). Marks
+    only the cells actually in TRAIL_PARAMS to avoid extra quote calls for
+    the rest of the book."""
+    all_open = repo.get_open_positions()
+    trailing_eligible = [p for p in all_open if (p["timeframe"], p["zone_kind"]) in config.TRAIL_PARAMS]
+    if not trailing_eligible:
+        return
+    try:
+        client = execution.get_client()
+        enrich_positions_with_mark(trailing_eligible, lambda sym: cached_quote(client.get_quote, sym))
+    except Exception as e:  # noqa: BLE001
+        print(f"[loop] trailing sweep: mark enrichment failed, skipping this tick: {e!r}", flush=True)
+        return
+    exits, peak_updates = portfolio_state.check_trailing_exits(trailing_eligible)
+    for pos_id, peak in peak_updates:
+        repo.update_trail_peak(pos_id, peak)
+    for ex in exits:
+        _execute_close(ex)
+
+
 def _close_all_now() -> None:
     """Manual close-all (Mission Control button): buy back every open position
     at the live ask, same accounting path as SL/TP (_execute_close). Does NOT
@@ -350,6 +379,7 @@ def main() -> None:
             now_ms = int(time.time() * 1000)
             _sweep_real_expiry(now_ms)
             _sweep_realtime_exits(now_ms)
+            _sweep_trailing_exits(now_ms)
 
             # Mission Control "close all": API sets the flag, loop executes
             # (position writes stay with the single writer). Runs even when

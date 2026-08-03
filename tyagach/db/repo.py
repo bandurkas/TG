@@ -30,6 +30,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "ALTER TABLE zone_signals ADD COLUMN timeframe TEXT NOT NULL DEFAULT '15m'",
         "ALTER TABLE positions ADD COLUMN timeframe TEXT NOT NULL DEFAULT '15m'",
         "ALTER TABLE bot_state ADD COLUMN close_all_requested INTEGER NOT NULL DEFAULT 0",
+        # per-position trailing profit-lock (2026-08-03)
+        "ALTER TABLE positions ADD COLUMN trail_peak_usd REAL NOT NULL DEFAULT 0",
     ]
     for stmt in migrations:
         try:
@@ -344,6 +346,20 @@ def get_open_position(position_id: int) -> dict | None:
     ).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def update_trail_peak(position_id: int, peak_usd: float) -> None:
+    """Persist a position's running peak of unrealized $ PnL for the
+    per-position trailing profit-lock (services.config.TRAIL_PARAMS) so it
+    survives a loop restart. Only called for positions whose peak actually
+    moved this tick (see portfolio_state.check_trailing_exits)."""
+    conn = _connect()
+    conn.execute(
+        "UPDATE positions SET trail_peak_usd = ? WHERE id = ? AND status = 'open'",
+        (peak_usd, position_id),
+    )
+    conn.commit()
+    conn.close()
 
 
 def get_position_stats() -> dict:

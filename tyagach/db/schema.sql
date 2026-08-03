@@ -69,10 +69,11 @@ CREATE TABLE IF NOT EXISTS positions (
     status TEXT NOT NULL DEFAULT 'open',  -- open / closed
     exit_ts_ms INTEGER,
     exit_spot REAL,
-    exit_reason TEXT,                  -- tp / sl / expiry
+    exit_reason TEXT,                  -- tp / sl / expiry / trail / manual_close_all / manual_close_one
     close_order_id TEXT,
     pnl_net REAL,
-    created_at_ms INTEGER NOT NULL
+    created_at_ms INTEGER NOT NULL,
+    trail_peak_usd REAL NOT NULL DEFAULT 0  -- running peak of unrealized $ PnL, per-position trailing profit-lock
 );
 
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
