@@ -122,8 +122,6 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
     highs, lows, closes = df["high"].values, df["low"].values, df["close"].values
     n = len(df)
     triggered: list[TriggeredEntry] = []
-    # Only computed if this tf actually has an ATR-buffer cell active — see
-    # config.ATR_BUFFER_MULT for which (tf, kind) pairs use it and why.
     needs_atr = any(tf == cell_tf for cell_tf, _ in config.ATR_BUFFER_MULT)
     atr = atr_series(highs, lows, closes) if needs_atr else None
 
@@ -146,9 +144,7 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
         if atr_mult is not None and atr_val is not None and not pd.isna(atr_val):
             buf = atr_mult * atr_val
         else:
-            # Flat fallback: either this cell isn't in ATR_BUFFER_MULT, or its
-            # ATR isn't warmed up yet (cold-start only — ATR_PERIOD=14 bars).
-            buf = config.BUFFER_FRAC * ((zlo + zhi) / 2)
+            buf = config.BUFFER_FRAC * ((zlo + zhi) / 2)  # flat fallback / non-ATR cell
         stop_price = (zlo - buf) if is_long else (zhi + buf)
         end_idx = min(n - 1, start_idx + tf_cfg.max_lookahead)
 
