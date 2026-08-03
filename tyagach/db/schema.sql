@@ -7,8 +7,19 @@ CREATE TABLE IF NOT EXISTS bot_state (
     start_balance_usdt REAL NOT NULL DEFAULT 0,
     started_at_ms INTEGER,
     paused INTEGER NOT NULL DEFAULT 0,
+    close_all_requested INTEGER NOT NULL DEFAULT 0,  -- API sets, loop executes+resets
     last_processed_ts_ms INTEGER,           -- legacy 15m cursor; canonical cursors in tf_state
     updated_at_ms INTEGER NOT NULL
+);
+
+-- Partial (single-position) close requests: API inserts a row, loop deletes
+-- it once executed (read-and-reset, same convention as close_all_requested,
+-- but per-position and multi-row so more than one can queue between ticks).
+-- Deliberately does NOT pause the bot -- closing one position is an ordinary
+-- risk-management action that shouldn't halt new entries on other cells.
+CREATE TABLE IF NOT EXISTS close_requests (
+    position_id INTEGER PRIMARY KEY,
+    requested_at_ms INTEGER NOT NULL
 );
 
 -- Per-timeframe processing cursors.  Replaces the single last_processed_ts_ms

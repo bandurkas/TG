@@ -5,8 +5,9 @@ exposure pattern (see ARCHITECTURE.md: accepted, not hardened)."""
 from __future__ import annotations
 
 import os
+import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from db import repo
@@ -161,11 +162,25 @@ def resume():
 
 @app.post("/api/v1/tyagach/close_all")
 def close_all():
-    """Pauses new entries and invalidates all pending zone signals. Does NOT
-    flatten real open option positions — that needs a live Bybit call per
-    position and isn't implemented yet; this is signal-level close-all only,
-    matching what's safe to ship before the execution path has been
-    reviewed/tested end to end."""
+    """Pauses new entries, invalidates pending zone signals, AND flags every
+    open position for buyback. The LOOP executes the actual closes on its
+    next tick (~POLL_SECONDS) so position writes stay with the single writer
+    (see loop.py's _close_all_now)."""
     repo.set_paused(True)
     n = repo.close_all_pending()
-    return {"paused": True, "pending_signals_invalidated": n}
+    repo.request_close_all()
+    return {"paused": True, "pending_signals_invalidated": n,
+            "note": "loop will buy back all open positions on next tick"}
+
+
+@app.post("/api/v1/tyagach/close_position/{pos_id}")
+def close_position(pos_id: int):
+    """Partial close: queues a single-position buyback for the loop to
+    execute on its next tick (~POLL_SECONDS), same single-writer pattern as
+    /close_all but scoped to one position and WITHOUT pausing the bot. 404s
+    immediately if the position isn't currently open, so the dashboard
+    doesn't show a stale "closing…" state for one that already resolved."""
+    if repo.get_open_position(pos_id) is None:
+        raise HTTPException(status_code=404, detail=f"position {pos_id} not open")
+    repo.request_close_position(pos_id, int(time.time() * 1000))
+    return {"ok": True, "note": "loop will buy back this position on next tick"}

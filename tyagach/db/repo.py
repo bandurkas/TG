@@ -29,6 +29,7 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         # multi-TF additions
         "ALTER TABLE zone_signals ADD COLUMN timeframe TEXT NOT NULL DEFAULT '15m'",
         "ALTER TABLE positions ADD COLUMN timeframe TEXT NOT NULL DEFAULT '15m'",
+        "ALTER TABLE bot_state ADD COLUMN close_all_requested INTEGER NOT NULL DEFAULT 0",
     ]
     for stmt in migrations:
         try:
@@ -178,6 +179,54 @@ def set_paused(paused: bool) -> None:
     conn.close()
 
 
+def request_close_all() -> None:
+    """API-side: flags every open position for buyback and pauses new entries.
+    The loop (single writer) executes the actual closes on its next tick."""
+    conn = _connect()
+    conn.execute(
+        "UPDATE bot_state SET close_all_requested = 1, paused = 1, updated_at_ms = ? WHERE id = 1",
+        (int(time.time() * 1000),),
+    )
+    conn.commit()
+    conn.close()
+
+
+def pop_close_all_requested() -> bool:
+    """Read-and-reset the close-all flag (loop side)."""
+    conn = _connect()
+    row = conn.execute("SELECT close_all_requested FROM bot_state WHERE id = 1").fetchone()
+    requested = bool(row and row["close_all_requested"])
+    if requested:
+        conn.execute("UPDATE bot_state SET close_all_requested = 0 WHERE id = 1")
+        conn.commit()
+    conn.close()
+    return requested
+
+
+def request_close_position(position_id: int, now_ms: int) -> None:
+    """API-side: queues a single-position buyback for the loop to execute on
+    its next tick. Does NOT pause the bot -- an ordinary risk-management
+    action, not an emergency stop."""
+    conn = _connect()
+    conn.execute(
+        "INSERT OR IGNORE INTO close_requests (position_id, requested_at_ms) VALUES (?, ?)",
+        (position_id, now_ms),
+    )
+    conn.commit()
+    conn.close()
+
+
+def pop_close_requests() -> list[int]:
+    """Read-and-reset all pending single-position close requests (loop side)."""
+    conn = _connect()
+    ids = [r["position_id"] for r in conn.execute("SELECT position_id FROM close_requests")]
+    if ids:
+        conn.execute("DELETE FROM close_requests")
+        conn.commit()
+    conn.close()
+    return ids
+
+
 def set_last_processed(tf: str, ts_ms: int) -> None:
     """Update the per-TF cursor in tf_state (canonical) and keep the legacy
     bot_state.last_processed_ts_ms in sync for 15m so older API clients /
@@ -286,6 +335,15 @@ def get_open_positions(timeframe: str | None = None) -> list[dict]:
         rows = conn.execute("SELECT * FROM positions WHERE status = 'open'").fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_open_position(position_id: int) -> dict | None:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT * FROM positions WHERE id = ? AND status = 'open'", (position_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 def get_position_stats() -> dict:

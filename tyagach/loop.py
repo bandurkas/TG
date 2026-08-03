@@ -191,6 +191,26 @@ def _sweep_realtime_exits(now_ms: int) -> None:
         _execute_close(ex)
 
 
+def _close_all_now() -> None:
+    """Manual close-all (Mission Control button): buy back every open position
+    at the live ask, same accounting path as SL/TP (_execute_close). Does NOT
+    arm any circuit breaker -- a manual stop is an operator decision."""
+    for p in repo.get_open_positions():
+        _execute_close(portfolio_state.ExitDecision(p, "manual_close_all"))
+
+
+def _close_position_now(pos_id: int) -> None:
+    """Manual single-position close (Mission Control partial-close button).
+    The position may already be closed by the time the loop picks up the
+    request (a TP/SL/expiry sweep could have resolved it first in the same
+    tick) -- that's a no-op, not an error, since get_open_position returns
+    None for anything not still status='open'."""
+    p = repo.get_open_position(pos_id)
+    if p is None:
+        return
+    _execute_close(portfolio_state.ExitDecision(p, "manual_close_one"))
+
+
 def _execute_open(d: portfolio_state.EntryDecision) -> None:
     e = d.entry
     cfg = config.cell_config(e.timeframe, e.kind)
@@ -330,6 +350,20 @@ def main() -> None:
             now_ms = int(time.time() * 1000)
             _sweep_real_expiry(now_ms)
             _sweep_realtime_exits(now_ms)
+
+            # Mission Control "close all": API sets the flag, loop executes
+            # (position writes stay with the single writer). Runs even when
+            # paused -- request_close_all pauses the bot as its first step.
+            if repo.pop_close_all_requested():
+                print("[loop] CLOSE ALL requested — buying back all open positions", flush=True)
+                _close_all_now()
+
+            # Mission Control partial close: one or more single-position
+            # requests queued via POST /close_position/{id}. Does NOT pause.
+            for pos_id in repo.pop_close_requests():
+                print(f"[loop] CLOSE position {pos_id} requested (manual)", flush=True)
+                _close_position_now(pos_id)
+
             _snapshot_equity(now_ms)
             for tf in config.ACTIVE_TFS:
                 try:
