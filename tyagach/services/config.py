@@ -34,6 +34,25 @@ ATR_BUFFER_MULT: dict[tuple[str, str], float] = {
     ("1h", "FVG"): 2.0,
 }
 
+# 2026-08-03 round 2: swept 15m/30m/2h x OB/FVG/MB (9 cells) only -- BB and
+# 1h/MB were out of scope, still on the untouched default below. For the 7
+# cells here, a wider FLAT fraction beat both 0.0015 and ATR scaling (which
+# still gets blown through in a real trend, just later and for more $ --
+# confirmed via live-data replay of the 2026-08-02 losing streak,
+# SL_BUFFER_HANDOFF). Stays flat (bounded) on purpose -- no runaway widening
+# risk. 15m/OB and 2h/MB WERE swept but no grid point beat the default.
+# Keys here must stay disjoint from ATR_BUFFER_MULT -- see
+# test_flat_buffer_override.py's disjointness test.
+FLAT_BUFFER_FRAC_OVERRIDE: dict[tuple[str, str], float] = {
+    ("15m", "FVG"): 0.0025,
+    ("15m", "MB"):  0.005,
+    ("30m", "OB"):  0.002,
+    ("30m", "FVG"): 0.003,
+    ("30m", "MB"):  0.0025,
+    ("2h",  "OB"):  0.005,
+    ("2h",  "FVG"): 0.004,
+}
+
 # Per-zone validated config: R-target, expiry (days), entry IV threshold (DVOL %),
 # and depth_frac (how far into the zone price must retrace before entry counts —
 # 0.0=touch the near edge, 0.5=zone midpoint, 1.0=touch the far edge). These are

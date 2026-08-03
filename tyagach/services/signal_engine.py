@@ -144,7 +144,8 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
         if atr_mult is not None and atr_val is not None and not pd.isna(atr_val):
             buf = atr_mult * atr_val
         else:
-            buf = config.BUFFER_FRAC * ((zlo + zhi) / 2)  # flat fallback / non-ATR cell
+            flat_frac = config.FLAT_BUFFER_FRAC_OVERRIDE.get((tf, row["kind"]), config.BUFFER_FRAC)
+            buf = flat_frac * ((zlo + zhi) / 2)
         stop_price = (zlo - buf) if is_long else (zhi + buf)
         end_idx = min(n - 1, start_idx + tf_cfg.max_lookahead)
 
