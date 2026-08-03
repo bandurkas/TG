@@ -22,6 +22,30 @@ def is_live() -> bool:
 DAYS_PER_YEAR = 365.0
 BUFFER_FRAC = 0.0015  # SL buffer beyond zone edge, same as options_backtest.py
 
+# 2026-08-03 (SL_BUFFER_HANDOFF_2026-08-02.md + same-day combo-check follow-up):
+# BUFFER_FRAC alone was shown to be too tight to scale with either timeframe or
+# volatility -- median single-bar range already exceeds it at every TF, so the
+# stop fires on ordinary candle noise rather than a real structure break (64.5%
+# of live trades closed on SL, including 6 straight from one trending move).
+# Per-cell sweep (src/sl_buffer_atr_sweep.py) + full 13-cell portfolio combo
+# check (src/sl_buffer_atr_1h_combo_check.py) found the fix (buf = mult *
+# ATR(14), causal) clearly helps 1h/OB and 1h/FVG (holdout calmar 1.50->2.53,
+# 5.61->9.20 at mult=1.5-2.0; portfolio-level 0/8 negative quarters preserved,
+# holdout calmar 23.4->25.6) but HURTS or is neutral on 15m/30m -- during the
+# 2024-12->2025-04 ETH crash (-65.8%) + 2025-04->08 rally (+253.8%) inside the
+# validation split, correlated same-direction zones stack up (WEIGHT_PCT of
+# balance each, up to MAX_OPEN_PER_ZONE concurrent) and a wider buffer lets
+# each one run further into the trend before recognizing the stop, ballooning
+# per-trade worst-case loss (4.5x at 15m/OB) and therefore portfolio maxDD --
+# even though raw per-trade win rate/edge is still fine there. Scope
+# deliberately narrowed to 1h only; do not extend without re-running both
+# checks for the target cell.
+ATR_PERIOD = 14
+ATR_BUFFER_MULT: dict[tuple[str, str], float] = {
+    ("1h", "OB"): 2.0,
+    ("1h", "FVG"): 2.0,
+}
+
 # Per-zone validated config: R-target, expiry (days), entry IV threshold (DVOL %),
 # and depth_frac (how far into the zone price must retrace before entry counts —
 # 0.0=touch the near edge, 0.5=zone midpoint, 1.0=touch the far edge). These are

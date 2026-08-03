@@ -70,6 +70,8 @@ def find_entry(o, h, l, c, atr, zone, n, depth_frac, max_lookahead, buf_mode, at
     if buf_mode == "flat":
         buf = BUFFER_FRAC * ((zlo + zhi) / 2)
     else:
+        if zone.valid_from >= len(atr):
+            return None
         a = atr[zone.valid_from]
         if np.isnan(a):
             return None

@@ -45,6 +45,16 @@ def detect_zones(df: pd.DataFrame) -> list[zones_mod.Zone]:
     return zones_mod.build_zones(obs, bbs, mbs, fvgs)
 
 
+def atr_series(highs, lows, closes, period: int = config.ATR_PERIOD):
+    """Wilder-style true range, simple rolling mean(period). Causal — index i
+    only uses bars up to and including i, matching the ATR used to validate
+    ATR_BUFFER_MULT (src/sl_buffer_atr_sweep.py's atr_series)."""
+    highs, lows, closes = pd.Series(highs), pd.Series(lows), pd.Series(closes)
+    prev_close = closes.shift(1).fillna(closes.iloc[0])
+    tr = pd.concat([highs - lows, (highs - prev_close).abs(), (lows - prev_close).abs()], axis=1).max(axis=1)
+    return tr.rolling(period, min_periods=period).mean().values
+
+
 def zone_key(tf: str, z: zones_mod.Zone, formed_ts_ms: int) -> str:
     return f"{tf}:{z.kind}:{z.direction}:{formed_ts_ms}:{z.zone_low:.6f}:{z.zone_high:.6f}"
 
@@ -112,6 +122,10 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
     highs, lows, closes = df["high"].values, df["low"].values, df["close"].values
     n = len(df)
     triggered: list[TriggeredEntry] = []
+    # Only computed if this tf actually has an ATR-buffer cell active — see
+    # config.ATR_BUFFER_MULT for which (tf, kind) pairs use it and why.
+    needs_atr = any(tf == cell_tf for cell_tf, _ in config.ATR_BUFFER_MULT)
+    atr = atr_series(highs, lows, closes) if needs_atr else None
 
     for row in pending:
         start_idx = ts_to_idx.get(row["valid_from_ts_ms"])
@@ -127,7 +141,14 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
         # 0.0 = touch the near edge, 0.5 = zone midpoint (the old hardcoded
         # value), 1.0 = touch the far edge. See config.CELL_CONFIG.
         entry_level = (zhi - depth_frac * (zhi - zlo)) if is_long else (zlo + depth_frac * (zhi - zlo))
-        buf = config.BUFFER_FRAC * ((zlo + zhi) / 2)
+        atr_mult = config.ATR_BUFFER_MULT.get((tf, row["kind"]))
+        atr_val = atr[start_idx] if (atr_mult is not None and start_idx < len(atr)) else None
+        if atr_mult is not None and atr_val is not None and not pd.isna(atr_val):
+            buf = atr_mult * atr_val
+        else:
+            # Flat fallback: either this cell isn't in ATR_BUFFER_MULT, or its
+            # ATR isn't warmed up yet (cold-start only — ATR_PERIOD=14 bars).
+            buf = config.BUFFER_FRAC * ((zlo + zhi) / 2)
         stop_price = (zlo - buf) if is_long else (zhi + buf)
         end_idx = min(n - 1, start_idx + tf_cfg.max_lookahead)
 
