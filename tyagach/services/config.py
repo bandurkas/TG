@@ -158,16 +158,33 @@ ZONE_CONFIG = {
 # any kind), not a bad pick. BB stays on ZONE_CONFIG's untouched defaults
 # (still gets rejection-close for free, generically, since U1 -- just not a
 # retuned depth/r_target/expiry).
+# 2026-08-03 TP retune (src/tp_retarget_sweep.py, r_target-only sweep vs the
+# already-retuned SL buffer): a tighter r_target (more frequent TP hits)
+# beats the live default on 4 cells, with fee drag ~flat across the whole
+# grid for every cell (fees here are capped at 12.5% of premium, not
+# per-trade -- taking profit more often does not "overpay in fees" the way
+# it would under a flat per-trade fee). Portfolio combo check
+# (src/tp_and_bb_deactivation_combo_check.py, together with the 15m/BB
+# deactivation below) improves BOTH return and maxDD on every split:
+# validation calmar 35.7->106.2, holdout 27.3->68.1, holdout maxDD 19.8%->
+# 14.9%, 0/8 negative quarters preserved.
+#   15m/MB  r_target 7.0->2.1 (holdout calmar 1.43->2.54)
+#   30m/OB  r_target 10.0->5.0 (holdout calmar 7.02->13.18)
+#   30m/FVG r_target 7.0->3.5 (holdout calmar 13.86->15.58)
+#   2h/OB   r_target 5.0->3.75 (holdout calmar 1.85->2.41, same 0/8 robustness)
+# Other cells swept but unchanged -- no r_target beat the live default on
+# both validation and holdout simultaneously (15m/OB, 30m/MB, 1h/MB, 1h/OB,
+# 2h/FVG, 15m/FVG) or the tradeoff was ambiguous (2h/MB).
 CELL_CONFIG: dict[tuple[str, str], dict] = {
-    ("2h", "OB"): {"depth_frac": 0.675, "r_target": 5.0, "expiry_days": 0.25},
+    ("2h", "OB"): {"depth_frac": 0.675, "r_target": 3.75, "expiry_days": 0.25},
     ("2h", "FVG"): {"depth_frac": 0.675, "r_target": 10.0, "expiry_days": 0.167},
-    ("30m", "OB"): {"depth_frac": 0.300, "r_target": 10.0, "expiry_days": 0.125},
+    ("30m", "OB"): {"depth_frac": 0.300, "r_target": 5.0, "expiry_days": 0.125},
     ("1h", "OB"): {"depth_frac": 0.650, "r_target": 5.0, "expiry_days": 0.125},
-    ("30m", "FVG"): {"depth_frac": 0.300, "r_target": 7.0, "expiry_days": 0.125},
+    ("30m", "FVG"): {"depth_frac": 0.300, "r_target": 3.5, "expiry_days": 0.125},
     ("1h", "FVG"): {"depth_frac": 0.325, "r_target": 7.0, "expiry_days": 0.167},
     ("15m", "FVG"): {"depth_frac": 0.300, "r_target": 10.0, "expiry_days": 0.125},
     ("15m", "OB"): {"depth_frac": 0.700, "r_target": 4.0, "expiry_days": 0.083},
-    ("15m", "MB"): {"depth_frac": 0.425, "r_target": 7.0, "expiry_days": 0.125},
+    ("15m", "MB"): {"depth_frac": 0.425, "r_target": 2.1, "expiry_days": 0.125},
     ("30m", "MB"): {"depth_frac": 0.400, "r_target": 10.0, "expiry_days": 0.167},
     ("1h", "MB"): {"depth_frac": 0.400, "r_target": 10.0, "expiry_days": 0.25},
     ("2h", "MB"): {"depth_frac": 0.500, "r_target": 3.0, "expiry_days": 0.25},
@@ -265,8 +282,18 @@ TIMEFRAMES: dict[str, TF] = {
 #   CELL_CONFIG comment for the caution about this being an inference, not
 #   a live-proven fact yet). BB stays on its untouched config (re-tuning
 #   attempts stayed fragile) but remains active as before.
+#   2026-08-03: 15m/BB DEACTIVATED. tp_retarget_sweep.py's r_target sweep
+#   surfaced it failing on FULL current data at its live 5-day expiry_days
+#   (calmar exactly -1.00, 8/8 negative quarters, maxDD 62-64% -- a
+#   monotonic decline, not noise). Follow-up expiry_days sweep found the
+#   failure scales monotonically with hold length (worse at every step from
+#   3h to 5d) and that even the best short-hold alternative already tried
+#   and rejected in the 2026-08-02 BB/MB resweep (0.125d/3h) is still
+#   marginal (holdout calmar -0.24, 2/8 negative) -- not a tuning miss, BB
+#   has the fewest zones of any kind and appears structurally fragile at
+#   15m. Deactivating rather than re-tuning; see CELL_CONFIG's untouched
+#   entry-less state (no override needed once out of ACTIVE_CELLS).
 ACTIVE_CELLS: frozenset[tuple[str, str]] = frozenset({
-    ("15m", "BB"),
     ("15m", "OB"),
     ("15m", "MB"),
     ("30m", "MB"),

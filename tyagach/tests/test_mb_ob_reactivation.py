@@ -25,8 +25,10 @@ def test_15m_ob_reactivated():
 
 
 def test_mb_cell_configs_match_validated_values():
+    # 15m/MB r_target 7.0->2.1 as of the 2026-08-03 TP retune
+    # (tp_retarget_sweep.py) -- others unchanged by that round.
     expected = {
-        "15m": {"depth_frac": 0.425, "r_target": 7.0, "expiry_days": 0.125},
+        "15m": {"depth_frac": 0.425, "r_target": 2.1, "expiry_days": 0.125},
         "30m": {"depth_frac": 0.400, "r_target": 10.0, "expiry_days": 0.167},
         "1h": {"depth_frac": 0.400, "r_target": 10.0, "expiry_days": 0.25},
         "2h": {"depth_frac": 0.500, "r_target": 3.0, "expiry_days": 0.25},
@@ -44,12 +46,14 @@ def test_15m_ob_cell_config_matches_repicked_value():
     assert cfg["expiry_days"] == 0.083
 
 
-def test_bb_untouched_and_not_reactivated_config():
-    # BB stays live but on its plain ZONE_CONFIG defaults -- retuning
-    # attempts stayed fragile (2/8 negative quarters even after re-picking).
+def test_bb_deactivated_2026_08_03():
+    # 15m/BB was deactivated 2026-08-03: catastrophic on full current data at
+    # its live 5-day expiry_days (calmar -1.00, 8/8 negative quarters), and
+    # even the best short-hold alternative previously tried stayed marginal
+    # (holdout calmar -0.24) -- structural fragility, not a tuning miss.
     assert ("15m", "BB") not in config.CELL_CONFIG
-    assert config.cell_config("15m", "BB") == config.ZONE_CONFIG["BB"]
-    assert ("15m", "BB") in config.ACTIVE_CELLS  # still active, just untuned
+    assert config.cell_config("15m", "BB") == config.ZONE_CONFIG["BB"]  # untouched default, just unused
+    assert ("15m", "BB") not in config.ACTIVE_CELLS
 
 
 def test_mb_already_had_sizing_tiers_before_this_round():
