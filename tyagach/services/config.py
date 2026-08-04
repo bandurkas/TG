@@ -65,13 +65,30 @@ FLAT_BUFFER_FRAC_OVERRIDE: dict[tuple[str, str], float] = {
 #   MB: 70→50 — MB cells deactivated 2026-07-07 (live override, see ACTIVE_CELLS
 #     below); the entry is kept so a future re-activation reuses validated values.
 # Which cells actually trade is governed solely by ACTIVE_CELLS.
+# FVG/MB lowered again 50→45 on 2026-08-04, prompted by a live 29h+ entry
+# drought (ETH DVOL sitting ~48-49.5%, just under 50 for the whole window —
+# `src/iv_threshold_resweep.py` + `src/iv_threshold_lower_portfolio_check.py`).
+# Per-trade avg_pnl barely moves at 45 vs 50 (the resweep's own numbers); the
+# portfolio-level check found no harm down to iv=30 (0/8 negative quarters,
+# maxDD pinned flat at 24.0% on every tested level) but also no strong proven
+# upside in the validation/holdout backtest windows specifically — those
+# windows' order books were already near-saturated so the extra low-IV
+# candidates mostly never found a free slot in the historical sim. Live right
+# now the book is flat (0 open positions), so a lower threshold has real room
+# to actually fire, unlike the crowded backtest windows. 45 chosen as the
+# smallest/most conservative step off the grid, not the per-trade-optimal
+# (raising to the per-trade winner was already proven to collapse portfolio
+# holdout +432.5%→+115.6% — same frequency-vs-quality trap, don't repeat it
+# in the other direction without new evidence). OB/BB untouched (out of scope
+# of both sweeps). Watch live entries/day and win-rate over the next 1-2
+# weeks before considering 40/35/30.
 ZONE_CONFIG = {
     "OB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0, "depth_frac": 0.5},
-    "MB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0, "depth_frac": 0.5},
+    "MB": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 45.0, "depth_frac": 0.5},
     "BB": {"r_target": 2.5, "expiry_days": 5.0, "iv_threshold": 55.0, "depth_frac": 0.5},
     # Untuned generic default -- FVG only ever trades via its CELL_CONFIG
     # override below (2h), same pattern as OB.
-    "FVG": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 50.0, "depth_frac": 0.5},
+    "FVG": {"r_target": 3.0, "expiry_days": 0.5, "iv_threshold": 45.0, "depth_frac": 0.5},
 }
 
 # Per-cell overrides — takes priority over ZONE_CONFIG[kind] when a (tf, kind)
