@@ -5,7 +5,10 @@ Architecture (A) — per-TF sub-books:
   - same-direction conflict and per-zone caps are evaluated WITHIN a single TF.
     A 2h-OB bullish position does NOT block a 15m-OB bullish — they live in
     separate validated books.
-  - Sizing draws from the single shared balance (weight_pct * balance).
+  - Sizing draws from the single shared balance, capped at
+    config.SIZING_BALANCE_CAP (weight_pct * min(balance, cap)) so a growing
+    balance can't silently compound position sizes past what real ETH
+    options liquidity could absorb -- see config.py's 2026-08-05 note.
   - A global ceiling (MAX_OPEN_TOTAL_GLOBAL + MAX_TOTAL_MARGIN_PCT) prevents
     all TFs firing simultaneously from over-leveraging the account.
 
@@ -95,7 +98,8 @@ def decide_entries(
         option_side = "P" if is_long else "C"
         strike = e.entry_price
 
-        budget = config.WEIGHT_PCT.get(e.kind, 0.0) * balance
+        sizing_balance = min(balance, config.SIZING_BALANCE_CAP)
+        budget = config.WEIGHT_PCT.get(e.kind, 0.0) * sizing_balance
         margin_per_lot = config.LOT_SIZE * e.entry_price * config.MARGIN_PCT
         n_lots = int(budget // margin_per_lot) if margin_per_lot > 0 else 0
         if n_lots < 1:

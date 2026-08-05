@@ -240,6 +240,21 @@ MAX_OPEN_TOTAL_GLOBAL = 8   # hard cap on simultaneous positions across all TFs
 # the sweet spot, not "more is strictly better."
 MAX_TOTAL_MARGIN_PCT = 0.80  # combined open margin must not exceed 80% of balance
 
+# 2026-08-05 (SESSION_HANDOFF_2026-08-05_STRATEGY_RESET.md): position sizing
+# is `weight_pct * balance` -- uncompounded in the live account so far
+# (balance has barely moved off $2000), but every backtest "return%" figure
+# ever quoted for this bot compounds unboundedly against a SIMULATED balance
+# that runs into the tens of thousands over a multi-year replay (confirmed:
+# src/overfit_capacity_check.py -- capping sizing at the $2,000 starting
+# balance collapses the same validation/holdout split's return from
+# +2,390%/+1,274% to +309%/+262%; uncapped it's +29,835,643% on train). None
+# of those return% figures are a reliable signal of real edge; this cap keeps
+# a real (or future real-money) account's position sizes from ever silently
+# ballooning past what actual ETH options liquidity could absorb, regardless
+# of how large the tracked balance grows. Raise only with an explicit,
+# deliberate decision -- not a side effect of the bot winning for a while.
+SIZING_BALANCE_CAP = float(os.environ.get("TYAGACH_SIZING_BALANCE_CAP", "2000"))
+
 LOT_SIZE = 0.10  # ETH options min lot on Bybit (matches live_sizing.py convention)
 MARGIN_PCT = 0.15
 FEE_RATE = 0.0003    # 0.03% of underlying notional per side (real Bybit options taker)
@@ -368,12 +383,21 @@ TIMEFRAMES: dict[str, TF] = {
 #   has the fewest zones of any kind and appears structurally fragile at
 #   15m. Deactivating rather than re-tuning; see CELL_CONFIG's untouched
 #   entry-less state (no override needed once out of ACTIVE_CELLS).
+# 2026-08-05 (SESSION_HANDOFF_2026-08-05_STRATEGY_RESET.md): all 4 MB
+# timeframes DEACTIVATED again. Two independent, converging pieces of
+# evidence: (1) live since the 08-02 rejection-close reactivation, MB is
+# 5/5 losing trades, -$26.99, and MB overall is -$64.81 of the bot's total
+# -$85.41 loss; (2) the "reverse MB" idea (sell the opposite side on the same
+# signal) was tested (src/mb_reversal_sweep.py) and decisively REJECTED --
+# not just unprofitable but catastrophic (calmar ~-1.0, 8/8 negative quarters
+# on every cell/r_target tested) because MB's payoff is asymmetric
+# (close stop / far r_target=10 tp on 2 of 4 cells), so mirroring the barriers
+# makes the trade structurally harder to win, not easier. No mechanism found
+# this session that fixes MB -- removing it stops the largest confirmed bleed
+# outright. See CELL_CONFIG above: entries are kept (not deleted) so a future
+# re-activation with a genuinely new mechanism can reuse the validated values.
 ACTIVE_CELLS: frozenset[tuple[str, str]] = frozenset({
     ("15m", "OB"),
-    ("15m", "MB"),
-    ("30m", "MB"),
-    ("1h",  "MB"),
-    ("2h",  "MB"),
     ("2h",  "OB"),
     ("2h",  "FVG"),
     ("30m", "OB"),

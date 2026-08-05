@@ -365,7 +365,7 @@ def _expire_orphaned_pending_signals() -> None:
     rows would otherwise sit in the DB forever."""
     for row in repo.get_all_pending_zone_signals():
         if (row["timeframe"], row["kind"]) not in config.ACTIVE_CELLS:
-            repo.set_zone_signal_status(row["zone_key"], "expired")
+            repo.set_zone_signal_status(row["zone_key"], "expired", reason="inactive_cell")
 
 
 def main() -> None:

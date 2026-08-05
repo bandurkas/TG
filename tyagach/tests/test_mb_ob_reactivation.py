@@ -15,9 +15,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services import config
 
 
-def test_mb_active_on_all_four_timeframes():
+def test_mb_deactivated_again_2026_08_05():
+    # Re-deactivated (see config.py's 2026-08-05 ACTIVE_CELLS comment): live
+    # since this file's 08-02 reactivation was 5/5 losing trades, and the
+    # "reverse MB" alternative was tested and decisively rejected
+    # (src/mb_reversal_sweep.py). CELL_CONFIG values are kept, unchanged
+    # (test_mb_cell_configs_match_validated_values below), only ACTIVE_CELLS
+    # membership changed.
     for tf in ("15m", "30m", "1h", "2h"):
-        assert (tf, "MB") in config.ACTIVE_CELLS, f"{tf}/MB should be active"
+        assert (tf, "MB") not in config.ACTIVE_CELLS, f"{tf}/MB should be inactive"
 
 
 def test_15m_ob_reactivated():

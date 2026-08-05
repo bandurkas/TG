@@ -32,6 +32,13 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "ALTER TABLE bot_state ADD COLUMN close_all_requested INTEGER NOT NULL DEFAULT 0",
         # per-position trailing profit-lock (2026-08-03)
         "ALTER TABLE positions ADD COLUMN trail_peak_usd REAL NOT NULL DEFAULT 0",
+        # backtest-vs-live frequency gap diagnosis (2026-08-05): every path that
+        # sets status='expired' collapsed 3 distinct causes (lookahead timeout,
+        # cold-start stale touch, entry-hour veto) into one indistinguishable
+        # value -- this column records WHICH one, additive/nullable so it
+        # doesn't change existing status semantics or break anything reading
+        # `status`. See SESSION_HANDOFF_2026-08-05_STRATEGY_RESET.md.
+        "ALTER TABLE zone_signals ADD COLUMN expire_reason TEXT",
     ]
     for stmt in migrations:
         try:
@@ -294,9 +301,13 @@ def get_all_pending_zone_signals() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def set_zone_signal_status(zone_key: str, status: str) -> None:
+def set_zone_signal_status(zone_key: str, status: str, reason: str | None = None) -> None:
     conn = _connect()
-    conn.execute("UPDATE zone_signals SET status = ? WHERE zone_key = ?", (status, zone_key))
+    if reason is not None:
+        conn.execute("UPDATE zone_signals SET status = ?, expire_reason = ? WHERE zone_key = ?",
+                     (status, reason, zone_key))
+    else:
+        conn.execute("UPDATE zone_signals SET status = ? WHERE zone_key = ?", (status, zone_key))
     conn.commit()
     conn.close()
 

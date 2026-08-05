@@ -111,7 +111,7 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
     still_active = []
     for row in pending:
         if (tf, row["kind"]) not in config.ACTIVE_CELLS:
-            repo.set_zone_signal_status(row["zone_key"], "expired")
+            repo.set_zone_signal_status(row["zone_key"], "expired", reason="inactive_cell")
         else:
             still_active.append(row)
     pending = still_active
@@ -130,7 +130,7 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
         if start_idx is None:
             # zone's valid_from bar already fell out of the rolling window without
             # ever triggering — can't be evaluated anymore, drop it.
-            repo.set_zone_signal_status(row["zone_key"], "expired")
+            repo.set_zone_signal_status(row["zone_key"], "expired", reason="fell_out_of_window")
             continue
 
         is_long = row["direction"] == "bullish"
@@ -174,12 +174,12 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
                     # Too old to act on with today's live quote — e.g. a cold-start
                     # backlog. Expire rather than trade a historical touch against the
                     # wrong price context.
-                    repo.set_zone_signal_status(row["zone_key"], "expired")
+                    repo.set_zone_signal_status(row["zone_key"], "expired", reason="stale_touch")
                 elif _time.gmtime(touch_ts_ms / 1000).tm_hour in config.ENTRY_VETO_UTC_HOURS:
                     # Entry-hour veto (config.ENTRY_VETO_UTC_HOURS): consume the
                     # touch without trading — deferring it instead would turn the
                     # veto into an untested "delay to 16:00" variant.
-                    repo.set_zone_signal_status(row["zone_key"], "expired")
+                    repo.set_zone_signal_status(row["zone_key"], "expired", reason="entry_veto_hour")
                 else:
                     triggered.append(TriggeredEntry(row["zone_key"], tf, row["kind"],
                                                      row["direction"], touch_ts_ms,
@@ -187,6 +187,6 @@ def scan_pending_zones(df: pd.DataFrame, tf: str) -> list[TriggeredEntry]:
                 resolved = True
                 break
         if not resolved and end_idx >= start_idx + tf_cfg.max_lookahead:
-            repo.set_zone_signal_status(row["zone_key"], "expired")
+            repo.set_zone_signal_status(row["zone_key"], "expired", reason="lookahead_timeout")
 
     return triggered
